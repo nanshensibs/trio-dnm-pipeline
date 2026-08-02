@@ -1,0 +1,242 @@
+# Auto-generated from lupus_coscientist.agents.registry — do not edit by hand.
+framework: Lupus Co-Scientist
+version: 0.1.0
+n_agents: 31
+agents:
+- n: 1
+  id: literature
+  name: Literature Agent
+  layer: 1
+  layer_name: Knowledge Acquisition
+  purpose: 'Comprehensive, structured literature review: consensus, unknowns, contradictions.'
+  mcp_tools:
+  - mcp__PubMed__search_articles
+  - mcp__Consensus__search
+  - mcp__Scholar_Gateway__semanticSearch
+  - mcp__PubMed__get_article_metadata
+- n: 2
+  id: evidence_ranking
+  name: Evidence Ranking Agent
+  layer: 1
+  layer_name: Knowledge Acquisition
+  purpose: Rank evidence by causal tier; prevent treating all papers equally.
+  mcp_tools: []
+- n: 3
+  id: public_database
+  name: Public Database Agent
+  layer: 1
+  layer_name: Knowledge Acquisition
+  purpose: Find relevant public datasets (GEO/ArrayExpress/ImmPort/HuBMAP/HCA).
+  mcp_tools:
+  - mcp__PubMed__search_articles
+- n: 4
+  id: clinical_guideline
+  name: Clinical Guideline Agent
+  layer: 1
+  layer_name: Knowledge Acquisition
+  purpose: Collect EULAR/ACR/KDIGO/FDA/EMA standards and identify clinical gaps.
+  mcp_tools:
+  - mcp__Clinical_Trials__search_trials
+  - mcp__Clinical_Trials__analyze_endpoints
+- n: 5
+  id: cell_state
+  name: Cell State Agent
+  layer: 2
+  layer_name: Mechanism Discovery
+  purpose: Identify functional cell states (ABC/pre-ABC/GC/plasma), not clusters.
+  mcp_tools: []
+- n: 6
+  id: trajectory
+  name: Development Trajectory Agent
+  layer: 2
+  layer_name: Mechanism Discovery
+  purpose: 'Lineage: branching, convergence, irreversibility, plasticity, the fork.'
+  mcp_tools: []
+- n: 7
+  id: regulatory_network
+  name: Regulatory Network Agent
+  layer: 2
+  layer_name: Mechanism Discovery
+  purpose: TF-enhancer-epigenetic network (SCENIC+/ArchR/CellOracle spirit).
+  mcp_tools: []
+- n: 8
+  id: ligand_receptor
+  name: Ligand-Receptor Agent
+  layer: 2
+  layer_name: Mechanism Discovery
+  purpose: Intercellular communication, correctly separating sender from receiver.
+  mcp_tools: []
+- n: 9
+  id: genetic_causality
+  name: Genetic Causality Agent
+  layer: 2
+  layer_name: Mechanism Discovery
+  purpose: GWAS+eQTL+pQTL+CRISPR+coloc+fine-mapping -> causal genes (top-tier edges).
+  mcp_tools:
+  - mcp__Open_Targets__query_open_targets_graphql
+  - mcp__Open_Targets__search_entities
+  - mcp__Open_Targets__batch_query_open_targets_graphql
+- n: 10
+  id: evolutionary
+  name: Evolutionary Biology Agent
+  layer: 2
+  layer_name: Mechanism Discovery
+  purpose: Why would evolution preserve this pathway? Trade-off / antagonistic pleiotropy.
+  mcp_tools: []
+- n: 11
+  id: tissue_ecology
+  name: Tissue Ecology Agent
+  layer: 2
+  layer_name: Mechanism Discovery
+  purpose: Niches (vascular/stromal/immune), TLS; which niche sustains the pathogenic state.
+  mcp_tools: []
+- n: 12
+  id: metabolism
+  name: Metabolism Agent
+  layer: 2
+  layer_name: Mechanism Discovery
+  purpose: Metabolic programs (lipid/SREBP/mito/glycolysis) enabling the pathogenic state.
+  mcp_tools: []
+- n: 13
+  id: mechanism_generator
+  name: Mechanism Generator
+  layer: 3
+  layer_name: Hypothesis Generation
+  purpose: Produce 20-50 distinct candidate mechanisms, each with a causal chain.
+  mcp_tools: []
+- n: 14
+  id: counterfactual
+  name: Counterfactual Agent
+  layer: 3
+  layer_name: Hypothesis Generation
+  purpose: Ask what if the opposite were true; surface flipping observations.
+  mcp_tools: []
+- n: 15
+  id: alternative
+  name: Alternative Explanation Agent
+  layer: 3
+  layer_name: Hypothesis Generation
+  purpose: Enumerate all plausible explanations (artifact/confound/reverse/rival).
+  mcp_tools: []
+- n: 16
+  id: reviewer
+  name: Reviewer Agent
+  layer: 3
+  layer_name: Hypothesis Generation
+  purpose: Nature/Science/Cell reviewer; find the fatal flaw per hypothesis.
+  mcp_tools: []
+- n: 17
+  id: novelty
+  name: Novelty Agent
+  layer: 3
+  layer_name: Hypothesis Generation
+  purpose: Rate novelty (incremental/moderate/major) vs prior literature.
+  mcp_tools:
+  - mcp__PubMed__search_articles
+  - mcp__Consensus__search
+- n: 18
+  id: public_validation
+  name: Public Data Validation Agent
+  layer: 4
+  layer_name: Validation
+  purpose: Test each hypothesis on INDEPENDENT public data; never on discovery data.
+  mcp_tools:
+  - mcp__PubMed__search_articles
+- n: 19
+  id: experimental_design
+  name: Experimental Design Agent
+  layer: 4
+  layer_name: Validation
+  purpose: Design discriminating experiments with outcome likelihood tables.
+  mcp_tools: []
+- n: 20
+  id: statistics
+  name: Statistics Agent
+  layer: 4
+  layer_name: Validation
+  purpose: Audit batch effects, data leakage, confounding, multiple testing.
+  mcp_tools: []
+- n: 21
+  id: drug_discovery
+  name: Drug Discovery Agent
+  layer: 5
+  layer_name: Translation
+  purpose: Mechanism -> druggable target -> existing drugs -> trials.
+  mcp_tools:
+  - mcp__Open_Targets__query_open_targets_graphql
+  - mcp__Clinical_Trials__search_trials
+- n: 22
+  id: biomarker
+  name: Biomarker Agent
+  layer: 5
+  layer_name: Translation
+  purpose: Diagnostic / prognostic / response biomarkers per mechanism.
+  mcp_tools: []
+- n: 23
+  id: precision_medicine
+  name: Precision Medicine Agent
+  layer: 5
+  layer_name: Translation
+  purpose: Define patient endotypes rather than disease categories.
+  mcp_tools: []
+- n: 24
+  id: trial_design
+  name: Trial Design Agent
+  layer: 5
+  layer_name: Translation
+  purpose: Enrichment, endpoints, adaptive design, stratification by endotype.
+  mcp_tools:
+  - mcp__Clinical_Trials__analyze_endpoints
+  - mcp__Clinical_Trials__search_trials
+- n: 25
+  id: debate
+  name: Debate Agent
+  layer: 6
+  layer_name: Meta Reasoning
+  purpose: Structured debate between top hypotheses; emit belief log-odds deltas.
+  mcp_tools: []
+- n: 26
+  id: consensus
+  name: Consensus Agent
+  layer: 6
+  layer_name: Meta Reasoning
+  purpose: Find agreement; produce the consensus causal model; list open disagreements.
+  mcp_tools: []
+- n: 27
+  id: skeptic
+  name: Skeptic Agent
+  layer: 6
+  layer_name: Meta Reasoning
+  purpose: Attempt to falsify every surviving conclusion; demand a breaking observation.
+  mcp_tools: []
+- n: 28
+  id: meta_reviewer
+  name: Meta Reviewer
+  layer: 6
+  layer_name: Meta Reasoning
+  purpose: 'Final report: evidence score, confidence, uncertainty, critical experiment, publication.'
+  mcp_tools: []
+- n: 29
+  id: causal_graph
+  name: Causal Evidence Graph Agent
+  layer: 0
+  layer_name: Cross-cutting (novel)
+  purpose: Audit causal chains; surface contradictions and weakest links.
+  mcp_tools: []
+- n: 30
+  id: negative_evidence
+  name: Negative Evidence Agent
+  layer: 0
+  layer_name: Cross-cutting (novel)
+  purpose: Hunt contradictory data, failed replications, null perturbations, boundaries.
+  mcp_tools:
+  - mcp__PubMed__search_articles
+  - mcp__Consensus__search
+  - mcp__Open_Targets__query_open_targets_graphql
+- n: 31
+  id: experiment_planner
+  name: Decision-Theoretic Experiment Planner
+  layer: 0
+  layer_name: Cross-cutting (novel)
+  purpose: Rank experiments by expected information gain / cost; pick the smallest set.
+  mcp_tools: []
