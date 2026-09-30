@@ -8,10 +8,9 @@ Use it to see the output formats, not to learn anything about biology.
 """
 from __future__ import annotations
 
-import json
 import os
 import random
-from typing import Dict, Optional
+from typing import Dict
 
 VCF_HEADER = """##fileformat=VCFv4.2
 ##source=trio-dnm-demo (SIMULATED DATA)

@@ -1,4 +1,4 @@
-"""Command-line interface: ``trio-dnm {qc-gate,call,annotate,somatic,ch-screen,signatures,config}``."""
+"""Command-line interface: ``trio-dnm {qc-gate,call,annotate,somatic,ch-screen,signatures,demo,config}``."""
 from __future__ import annotations
 
 import argparse
@@ -108,6 +108,15 @@ def cmd_qc_gate(a) -> int:
     return 1 if res["status"] == "FAIL" and not a.no_halt else 0
 
 
+def cmd_demo(a) -> int:
+    from .demo import run_demo
+
+    res = run_demo(a.out)
+    print(f"\nDemo finished. Simulated inputs and all outputs are in {res['outdir']}")
+    print("Open results/F1.report.html in a browser; see README.txt for a guide to each file.")
+    return 0
+
+
 def cmd_config(a) -> int:
     print(json.dumps(_cfg(a), indent=2))
     return 0
@@ -203,6 +212,10 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--no-halt", action="store_true")
     q.add_argument("--out", required=True)
     q.set_defaults(func=cmd_qc_gate)
+
+    m = sub.add_parser("demo", help="run every stage on a small SIMULATED trio")
+    m.add_argument("--out", default="trio_dnm_demo", help="output directory")
+    m.set_defaults(func=cmd_demo)
 
     k = sub.add_parser("config", help="print the effective configuration")
     common(k)

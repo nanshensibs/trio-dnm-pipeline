@@ -284,3 +284,15 @@ def test_dng2tsv(tmp_path, capsys):
     mod.main([str(f)])
     lines = capsys.readouterr().out.strip().split("\n")
     assert lines[1].startswith("chr1\t100\tC\tT\t") and len(lines) == 2
+
+
+def test_demo_runs_every_stage(tmp_path):
+    assert main(["demo", "--out", str(tmp_path / "demo")]) == 0
+    res = tmp_path / "demo" / "results"
+    for f in ["F1.qc_gate.json", "F1.candidates.tsv", "F1.annotated.tsv", "F1.report.html",
+              "TUM.somatic.tsv", "trio.ch_screen.tsv"]:
+        assert (res / f).exists(), f
+    top = read_tsv(res / "F1.annotated.tsv")[0]
+    assert top["gene"] == "SCN2A" and top["acmg_class"] == "Pathogenic"
+    som = {r["gene"] + r["pos"]: r for r in read_tsv(res / "TUM.somatic.tsv")}
+    assert som["NF1150"]["second_hit"] and som["KRAS800"]["status"] == "FILTERED"

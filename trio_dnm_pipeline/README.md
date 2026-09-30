@@ -26,6 +26,7 @@ trio_dnm_pipeline/
 | `trio-dnm somatic` | 10 — trio-aware germline subtraction, multi-caller consensus, FFPE flag, CN/LOH, CCF + clonality, TMB, drivers/hotspots, germline + somatic second hits, signatures | `somatic.tsv`, `somatic_summary.json`, `somatic.sbs96.tsv` |
 | `trio-dnm ch-screen` | 10.4 — clonal haematopoiesis genes at 2–35 % VAF | `ch_screen.tsv`, `ch_summary.json` |
 | `trio-dnm signatures` | any VCF → SBS-96 + NNLS refit | `sbs96.tsv` |
+| `trio-dnm demo` | run every stage on a small simulated trio | `demo/inputs/`, `demo/results/`, `README.txt` |
 | `trio-dnm config` | print effective thresholds | JSON |
 
 All thresholds live in `trio_dnm/config.py` (written out in `conf/defaults.json`); pass
@@ -35,7 +36,8 @@ All thresholds live in `trio_dnm/config.py` (written out in `conf/defaults.json`
 
 ```bash
 cd trio_dnm_pipeline
-python -m pytest -q                                  # 18 tests, no dependencies beyond pytest
+bin/trio-dnm demo --out demo                         # every stage on a SIMULATED trio; open demo/results/F1.report.html
+python -m pytest -q                                  # 19 tests, no dependencies beyond pytest
 
 # post-calling only (you already have a joint, normalised trio VCF):
 bin/trio-dnm call --vcf trio.norm.vcf.gz --ped trio.ped --fasta GRCh38.fa \
