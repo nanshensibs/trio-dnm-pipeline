@@ -3,6 +3,7 @@ classify, prioritise, run sanity checks and signatures, and write reports."""
 from __future__ import annotations
 
 import json
+import sys
 from collections import Counter
 from typing import Dict, List, Optional
 
@@ -22,7 +23,7 @@ ANNOT_COLUMNS = [
     "REVEL", "AlphaMissense", "AlphaMissense_class", "CADD_PHRED", "BayesDel_noAF", "PrimateAI", "ESM1b", "EVE",
     "MetaRNN", "predictors_damaging", "spliceai", "phyloP", "GERP", "cCRE", "utr_annotator",
     "pLI", "LOEUF", "mis_z", "shet", "hi_score", "lof_intolerant", "missense_constrained",
-    "disease", "inheritance", "mechanism", "hotspot", "phenotype_score",
+    "disease", "inheritance", "mechanism", "hotspot", "phenotype_score", "loftee_filter",
 ]
 
 
@@ -107,8 +108,16 @@ def run_annotate(
     if call_summary:
         with open(call_summary) as fh:
             summary_in = json.load(fh)
-        father, mother = summary_in.get("father", ""), summary_in.get("mother", "")
-    poo = sanity.load_parent_of_origin(poo_path, father, mother)
+        father, mother = summary_in.get("father", "") or "", summary_in.get("mother", "") or ""
+    if not (father and mother) and len(reader.samples) == 3:
+        # `call` writes the dnm.vcf sample columns as proband, father, mother.
+        father, mother = father or reader.samples[1], mother or reader.samples[2]
+    if poo_path and not (father and mother):
+        print("warning: parent sample IDs unknown (no --call-summary and no proband/father/mother columns in "
+              "the VCF); only parent-of-origin rows labelled paternal/maternal can be used", file=sys.stderr)
+    poo = sanity.load_parent_of_origin(poo_path, father=father, mother=mother)
+    if poo_path and not poo:
+        print(f"warning: no parent-of-origin assignments could be read from {poo_path}", file=sys.stderr)
     san = sanity.evaluate(rows, cfg, fasta, poo, paternal_age, maternal_age)
 
     sig_result = None

@@ -87,8 +87,11 @@ DEFAULTS: Dict[str, Any] = {
     # Biological sanity-check expectations (per trio).
     "expectations": {
         "wgs": {"snv": [45, 95], "indel": [3, 12], "hard_low": 30, "hard_high": 150},
-        "wes": {"snv": [0.5, 2.5], "indel": [0, 1], "hard_low": 0, "hard_high": 5},
-        "panel": {"snv": [0, 1], "indel": [0, 1], "hard_low": 0, "hard_high": 2},
+        # Per-trio ranges around a cohort mean of ~1-1.5 coding DNMs per exome
+        # (Poisson: ~30% of normal exome trios have none); flag_low false =
+        # only counts above the range are flagged.
+        "wes": {"snv": [0, 3], "indel": [0, 1], "hard_low": 0, "hard_high": 5, "flag_low": False},
+        "panel": {"snv": [0, 1], "indel": [0, 1], "hard_low": 0, "hard_high": 2, "flag_low": False},
         "titv": {"wgs": [1.7, 2.5], "wes": [2.2, 3.5]},
         "paternal_fraction": [0.65, 0.90],
         "cpg_fraction_snv": [0.10, 0.25],
@@ -97,12 +100,16 @@ DEFAULTS: Dict[str, Any] = {
         # own cohort before using the age-adjusted expectation quantitatively.
         "age_model": {"intercept": 6.0, "paternal": 1.51, "maternal": 0.37},
     },
+    "sanity": {
+        # Median proband VAF of germline DNMs (>= 10 sites) must fall here.
+        "median_vaf_range": [0.42, 0.58],
+    },
     "annotation": {
         # Single pre-selected PP3/BP4 tool per ClinGen SVI (Pejaver 2022).
         "pp3_tool": "REVEL",
         "calibration": {
             # thresholds: [supporting, moderate, strong, very_strong] (None = not reached)
-            "REVEL": {"pp3": [0.644, 0.773, 0.932, None], "bp4": [0.290, 0.183, 0.052, 0.003]},
+            "REVEL": {"pp3": [0.644, 0.773, 0.932, None], "bp4": [0.290, 0.183, 0.016, 0.003]},
             "CADD_PHRED": {"pp3": [25.3, 28.1, None, None], "bp4": [22.7, 17.3, None, None]},
             "BayesDel_noAF": {"pp3": [0.13, 0.27, 0.41, None], "bp4": [-0.18, -0.36, None, None]},
             # ClinGen calibration of AlphaMissense (Bergquist et al. 2025) —

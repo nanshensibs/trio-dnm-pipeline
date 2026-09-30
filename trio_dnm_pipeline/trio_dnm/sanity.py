@@ -13,7 +13,11 @@ from .genome import Fasta, is_cpg_transition, is_transition
 
 
 def load_parent_of_origin(path: Optional[str], father: str, mother: str) -> Dict[str, str]:
-    """Read unfazed output (or a chrom/pos/origin TSV) -> {'chrom:pos': 'paternal'|'maternal'}."""
+    """Read unfazed output (or a chrom/pos/origin TSV) -> {'chrom:pos': 'paternal'|'maternal'}.
+
+    unfazed reports the origin as a parent sample ID, so ``father``/``mother``
+    must be the trio's sample IDs; rows with an empty or unrecognised origin
+    are skipped."""
     out: Dict[str, str] = {}
     if not path:
         return out
@@ -27,10 +31,17 @@ def load_parent_of_origin(path: Optional[str], father: str, mother: str) -> Dict
                 header = [x.lstrip("#") for x in f]
                 continue
             row = dict(zip(header or ["chrom", "pos", "origin"], f))
-            origin = row.get("origin_parent") or row.get("origin") or ""
-            if origin == father or origin.lower().startswith("pat") or origin.lower() == "father":
+            origin = (row.get("origin_parent") or row.get("origin") or "").strip()
+            if not origin:
+                continue
+            low = origin.lower()
+            if father and origin == father:
                 o = "paternal"
-            elif origin == mother or origin.lower().startswith("mat") or origin.lower() == "mother":
+            elif mother and origin == mother:
+                o = "maternal"
+            elif low.startswith("pat") or low == "father":
+                o = "paternal"
+            elif low.startswith("mat") or low == "mother":
                 o = "maternal"
             else:
                 continue
@@ -62,15 +73,18 @@ def evaluate(
                               "n_parental_mosaic": sum(1 for v in variants if v.get("track") == "parental_mosaic")}
     warnings: List[str] = []
 
-    # Counts.
+    # Counts. Exome/panel trios carry ~0-3 coding DNMs, so low counts are
+    # expected there and only excess is flagged (``flag_low``: false).
     e = exp.get(dt, exp["wgs"])
     lo, hi = e["snv"]
-    if len(snvs) < e["hard_low"] or len(snvs) > e["hard_high"]:
-        warnings.append(f"SNV DNM count {len(snvs)} outside hard range [{e['hard_low']}, {e['hard_high']}] – revisit filtering")
-    elif not lo <= len(snvs) <= hi:
-        warnings.append(f"SNV DNM count {len(snvs)} outside expected [{lo}, {hi}]")
-    if not e["indel"][0] <= len(indels) <= e["indel"][1]:
-        warnings.append(f"indel DNM count {len(indels)} outside expected {e['indel']}")
+    flag_low = e.get("flag_low", True)
+    n_snv, n_indel = len(snvs), len(indels)
+    if n_snv > e["hard_high"] or (flag_low and n_snv < e["hard_low"]):
+        warnings.append(f"SNV DNM count {n_snv} outside hard range [{e['hard_low']}, {e['hard_high']}] – revisit filtering")
+    elif n_snv > hi or (flag_low and n_snv < lo):
+        warnings.append(f"SNV DNM count {n_snv} outside expected [{lo}, {hi}]")
+    if n_indel > e["indel"][1] or (flag_low and n_indel < e["indel"][0]):
+        warnings.append(f"indel DNM count {n_indel} outside expected {e['indel']}")
     if paternal_age is not None and maternal_age is not None and dt == "wgs":
         am = exp["age_model"]
         expected = am["intercept"] + am["paternal"] * paternal_age + am["maternal"] * maternal_age
@@ -105,8 +119,9 @@ def evaluate(
     # Allele balance.
     vafs = [float(v["proband_vaf"]) for v in germ if v.get("proband_vaf") not in (None, "")]
     res["median_proband_vaf"] = stats.median(vafs)
-    if vafs and len(vafs) >= 10 and not 0.42 <= res["median_proband_vaf"] <= 0.58:
-        warnings.append(f"median germline DNM VAF {res['median_proband_vaf']:.2f} deviates from 0.5")
+    vr = cfg["sanity"]["median_vaf_range"]
+    if vafs and len(vafs) >= 10 and not vr[0] <= res["median_proband_vaf"] <= vr[1]:
+        warnings.append(f"median germline DNM VAF {res['median_proband_vaf']:.2f} deviates from 0.5 (outside {vr})")
 
     # Parent of origin.
     if poo:
