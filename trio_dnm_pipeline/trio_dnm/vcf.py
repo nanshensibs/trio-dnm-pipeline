@@ -11,7 +11,7 @@ from __future__ import annotations
 import gzip
 import re
 from dataclasses import dataclass, field
-from typing import Dict, Iterator, List, Optional, TextIO
+from typing import Dict, Iterable, Iterator, List, Optional, TextIO
 
 MISSING = {".", "", None}
 
@@ -20,6 +20,13 @@ def open_text(path: str, mode: str = "rt") -> TextIO:
     if path.endswith((".gz", ".bgz")):
         return gzip.open(path, mode)  # type: ignore[return-value]
     return open(path, mode)
+
+
+def reject_bcf(path: str) -> None:
+    """The pure-Python reader handles text VCF (plain, .gz or .bgz) only."""
+    if path.endswith(".bcf"):
+        stem = path[: -len(".bcf")]
+        raise SystemExit(f"{path}: BCF is not supported; convert with bcftools view -Oz -o {stem}.vcf.gz {path}")
 
 
 def to_float(v) -> Optional[float]:
@@ -91,6 +98,16 @@ class Genotype:
     def alt_depth(self) -> int:
         ad = self.ad
         return sum(ad[1:]) if len(ad) > 1 else 0
+
+    @property
+    def ad_total(self) -> int:
+        """ref + alt reads from AD: the denominator consistent with ``vaf``.
+
+        Binomial tests, Wilson intervals and read-model posteriors use this;
+        depth filters use ``dp``. Falls back to ``dp`` when AD is absent.
+        """
+        ad = self.ad
+        return sum(ad) if ad else self.dp
 
     @property
     def dp(self) -> int:
@@ -213,22 +230,28 @@ class Record:
 
 class VCFReader:
     def __init__(self, path: str):
+        reject_bcf(path)
         self.path = path
         self.meta: List[str] = []
         self.samples: List[str] = []
         self.csq_fields: List[str] = []
         self._fh = open_text(path)
-        for line in self._fh:
-            line = line.rstrip("\n")
-            if line.startswith("##"):
-                self.meta.append(line)
-                if line.startswith("##INFO=<ID=CSQ") or line.startswith("##INFO=<ID=ANN"):
-                    m = re.search(r'Format: ([^"]+)"', line)
-                    if m and not self.csq_fields:
-                        self.csq_fields = [x.strip() for x in m.group(1).split("|")]
-            elif line.startswith("#CHROM"):
-                self.samples = line.split("\t")[9:]
-                break
+        try:
+            for line in self._fh:
+                line = line.rstrip("\n")
+                if line.startswith("##"):
+                    self.meta.append(line)
+                    if line.startswith("##INFO=<ID=CSQ") or line.startswith("##INFO=<ID=ANN"):
+                        # VEP: 'Format: A|B|...'; SnpEff: "Functional annotations: 'A | B | ...'"
+                        m = re.search(r"(?:Format: |Functional annotations: ')([^\"']+)", line)
+                        if m and not self.csq_fields:
+                            self.csq_fields = [x.strip() for x in m.group(1).split("|")]
+                elif line.startswith("#CHROM"):
+                    self.samples = line.split("\t")[9:]
+                    break
+        except UnicodeDecodeError:
+            self._fh.close()
+            raise SystemExit(f"{path}: not a text VCF (BCF?); convert with bcftools view -Oz") from None
 
     def __iter__(self) -> Iterator[Record]:
         for line in self._fh:
@@ -236,6 +259,16 @@ class VCFReader:
                 continue
             yield parse_record(line.rstrip("\n"), self.samples)
         self._fh.close()
+
+
+def require_samples(reader: VCFReader, ids: Iterable[str], what: str = "samples") -> None:
+    """Exit with a clear message when any of ``ids`` is missing from the header."""
+    missing = [s for s in dict.fromkeys(ids) if s not in reader.samples]
+    if missing:
+        raise SystemExit(
+            f"{what} {', '.join(missing)} not in the VCF header of {reader.path} "
+            f"(VCF samples: {', '.join(reader.samples) or 'none'})"
+        )
 
 
 def parse_info(s: str) -> Dict[str, object]:
@@ -276,11 +309,18 @@ def parse_record(line: str, samples: List[str]) -> Record:
     )
 
 
+def meta_id(line: str) -> Optional[str]:
+    """'##INFO=<ID=X,...>' -> '##INFO=<ID=X' (structured header lines keyed by type and ID)."""
+    m = re.match(r"(##[^=]+=<ID=[^,>]+)", line)
+    return m.group(1) if m else None
+
+
 class VCFWriter:
     def __init__(self, path: str, reader: VCFReader, extra_header: List[str], samples: Optional[List[str]] = None):
         self.samples = reader.samples if samples is None else samples
         self._fh = open_text(path, "wt")
-        meta = [m for m in reader.meta if not any(m.startswith(h.split(",")[0]) for h in extra_header)]
+        replaced = {meta_id(h) for h in extra_header} - {None}
+        meta = [m for m in reader.meta if meta_id(m) not in replaced]
         for m in meta + extra_header:
             self._fh.write(m + "\n")
         cols = ["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO"]

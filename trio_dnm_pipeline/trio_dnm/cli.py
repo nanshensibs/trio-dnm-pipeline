@@ -36,10 +36,22 @@ def cmd_call(a) -> int:
         raise SystemExit("no complete trio found in pedigree")
     if a.mean_depth:
         cfg["mean_depth"] = a.mean_depth
-    res = run_call(a.vcf, trios, cfg, a.out, a.exclude_bed, a.fasta, a.pon, a.recurrence, _kv(a.caller))
+    res = run_call(a.vcf, trios, cfg, a.out, a.exclude_bed, a.fasta, a.pon, a.recurrence, _kv(a.caller),
+                   extra_vcfs=a.extra_vcf, strand_vcf=a.strand_vcf)
     for p, s in res.items():
         print(f"{p}: {s['passing_by_track']} tiers={s['passing_by_tier']}")
-    return 0
+    # Stop-gate: raw Mendelian error rate (protocol Table 4); outputs are already written.
+    halted = [p for p, s in res.items() if s["mendelian_error_gate"] == "FAIL"]
+    q = cfg["qc"]
+    for p in halted:
+        s = res[p]
+        print(f"{'WARNING' if a.no_halt else 'ERROR'}: {p}: raw Mendelian error rate "
+              f"{s['raw_mendelian_error_rate']:.2%} over {s['raw_mendelian_informative_sites']} informative "
+              f"autosomal sites exceeds qc.mie_max_rate ({q['mie_max_rate']:.0%}) – suspect a sample swap, "
+              f"contamination or a wrong PED. Outputs were written; "
+              f"{'continuing because of --no-halt' if a.no_halt else 'halting (exit 3; override with --no-halt)'}.",
+              file=sys.stderr)
+    return 3 if halted and not a.no_halt else 0
 
 
 def cmd_annotate(a) -> int:
@@ -95,17 +107,32 @@ def cmd_signatures(a) -> int:
 def cmd_qc_gate(a) -> int:
     from . import qcgate
 
+    cfg = _cfg(a)
     trios = [t for t in read_ped(a.ped) if not a.proband or t.proband == a.proband]
     if not trios:
         raise SystemExit("no complete trio found in pedigree")
-    t = trios[0]
-    reported = {t.proband: t.proband_sex}
-    res = qcgate.evaluate(t, a.somalier_pairs, a.somalier_samples, _kv(a.verifybamid), _kv(a.mosdepth),
-                          a.data_type or "wgs", reported, a.consanguineous)
+    selfsm, mosdepth = _kv(a.verifybamid), _kv(a.mosdepth)
+    members = {s for t in trios for s in (t.proband, t.father, t.mother)}
+    for s in set(a.lcl or []) - members:
+        print(f"WARNING: --lcl {s} is not a member of any evaluated trio", file=sys.stderr)
+    results = []
+    for t in trios:
+        # Every member's inferred sex must match the pedigree.
+        reported = {t.proband: t.proband_sex, t.father: "male", t.mother: "female"}
+        if len(trios) > 1:  # several trios: judge each on its own members only
+            trio_ids = (t.proband, t.father, t.mother)
+            sm = {s: p for s, p in selfsm.items() if s in trio_ids}
+            md = {s: p for s, p in mosdepth.items() if s in trio_ids}
+        else:
+            sm, md = selfsm, mosdepth
+        results.append(qcgate.evaluate(t, a.somalier_pairs, a.somalier_samples, sm, md, cfg["data_type"],
+                                       reported, a.consanguineous, cfg=cfg, lcl=a.lcl))
+    res = results[0] if len(results) == 1 else results
     with open(a.out, "w") as fh:
         json.dump(res, fh, indent=2)
     print(json.dumps(res, indent=2))
-    return 1 if res["status"] == "FAIL" and not a.no_halt else 0
+    failed = any(r["status"] == "FAIL" for r in results)
+    return 1 if failed and not a.no_halt else 0
 
 
 def cmd_demo(a) -> int:
@@ -128,14 +155,16 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     def common(sp, data_type=True):
-        sp.add_argument("--config", help="JSON file deep-merged over defaults")
+        sp.add_argument("--config", help="JSON file with the keys to change; values that differ from the defaults "
+                                         "are deep-merged over the defaults and the --data-type preset")
         sp.add_argument("--build", choices=["GRCh38", "GRCh37"])
         if data_type:
             sp.add_argument("--data-type", choices=["wgs", "wes", "panel"])
 
-    c = sub.add_parser("call", help="filter cascade, posterior, mosaic tracks, consensus tiers")
+    c = sub.add_parser("call", help="filter cascade, posterior, mosaic tracks, consensus tiers (exit 3: Mendelian stop-gate)")
     common(c)
-    c.add_argument("--vcf", required=True, help="joint-genotyped, normalised trio VCF (after CGP/PossibleDeNovo)")
+    c.add_argument("--vcf", required=True,
+                   help="joint-genotyped, normalised and gnomAD/PoN-annotated (vcfanno) trio VCF (after CGP/PossibleDeNovo)")
     c.add_argument("--ped", required=True)
     c.add_argument("--proband")
     c.add_argument("--out", required=True, help="output prefix")
@@ -143,8 +172,16 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--exclude-bed", action="append", default=[], help="hard-mask BED (repeatable)")
     c.add_argument("--pon", help="panel-of-normals VCF")
     c.add_argument("--recurrence", help="TSV key<TAB>n_trios of project-wide DNM recurrence")
-    c.add_argument("--caller", action="append", help="NAME=VCF of an external DNM caller (repeatable)")
+    c.add_argument("--caller", action="append",
+                   help="NAME=PATH of an external DNM caller: .vcf/.vcf.gz/.vcf.bgz or chrom/pos/ref/alt TSV (repeatable)")
+    c.add_argument("--extra-vcf", action="append", default=[],
+                   help="supplementary engine VCF (e.g. normalised DeepTrio/GLnexus, same sample IDs); its records "
+                        "absent from --vcf are evaluated too and flagged SECOND_ENGINE_ONLY (repeatable)")
+    c.add_argument("--strand-vcf", help="bcftools mpileup VCF with FORMAT/ADF,ADR at candidate sites (strand "
+                                        "evidence when the joint VCF has no SB/ADF/ADR)")
     c.add_argument("--mean-depth", type=float)
+    c.add_argument("--no-halt", action="store_true",
+                   help="exit 0 even when the raw Mendelian error rate exceeds qc.mie_max_rate")
     c.set_defaults(func=cmd_call)
 
     a = sub.add_parser("annotate", help="annotation, ACMG, prioritisation, sanity checks, report")
@@ -201,13 +238,15 @@ def build_parser() -> argparse.ArgumentParser:
     g.set_defaults(func=cmd_signatures)
 
     q = sub.add_parser("qc-gate", help="Stage-1 stop-gates (exit 1 on failure)")
+    common(q)
     q.add_argument("--ped", required=True)
-    q.add_argument("--proband")
+    q.add_argument("--proband", help="evaluate this trio only (default: every trio in the PED)")
     q.add_argument("--somalier-pairs")
     q.add_argument("--somalier-samples")
     q.add_argument("--verifybamid", action="append", help="SAMPLE=selfSM (repeatable)")
     q.add_argument("--mosdepth", action="append", help="SAMPLE=mosdepth.summary.txt (repeatable)")
-    q.add_argument("--data-type", choices=["wgs", "wes", "panel"])
+    q.add_argument("--lcl", action="append", default=[], metavar="SAMPLE",
+                   help="sample whose DNA is from a lymphoblastoid cell line (repeatable; adds a WARN)")
     q.add_argument("--consanguineous", action="store_true")
     q.add_argument("--no-halt", action="store_true")
     q.add_argument("--out", required=True)

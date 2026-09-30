@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from collections import Counter, OrderedDict, defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from . import genome, stats
 from .genome import Fasta, IntervalSet, Trio
-from .vcf import Genotype, Record, VCFReader, VCFWriter, open_text
+from .vcf import (Genotype, Record, VCFReader, VCFWriter, int_list, meta_id, open_text, reject_bcf,
+                  require_samples)
 
 LAYERS = ["L1_genotype", "L2_read_quality", "L3_region", "L4_population", "L5_posterior"]
 TRACKS = ("germline", "mosaic", "parental_mosaic")
@@ -36,6 +38,7 @@ class Candidate:
     proband_vaf_ci: Tuple[float, float] = (0.0, 1.0)
     homopolymer: int = 0
     context: str = ""
+    mosaic_parents: List[str] = field(default_factory=list)  # parental_mosaic track: the ALT-carrying parent(s)
 
     @property
     def passed(self) -> bool:
@@ -54,6 +57,10 @@ class Candidate:
 # --------------------------------------------------------------------------- #
 def norm_key(chrom: str, pos: int, ref: str, alt: str) -> str:
     return f"{genome.bare_chrom(chrom)}:{pos}:{ref}:{alt}"
+
+
+def warn(msg: str) -> None:
+    print(f"WARNING: {msg}", file=sys.stderr)
 
 
 def load_site_af(path: Optional[str]) -> Dict[str, float]:
@@ -86,19 +93,36 @@ def load_recurrence(path: Optional[str]) -> Dict[str, int]:
     return out
 
 
+def _is_vcf(path: str) -> bool:
+    if path.endswith((".vcf", ".vcf.gz", ".vcf.bgz")):
+        return True
+    try:
+        with open_text(path) as fh:
+            return fh.readline().startswith("##fileformat=VCF")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
 def load_caller_sites(path: str, proband: Optional[str] = None) -> set:
     """Sites reported as DNMs by an external caller (VCF or chrom/pos/ref/alt TSV).
 
     ``path`` may be a comma-separated list (e.g. Strelka2 SNV + indel VCFs).
+    ``.vcf``, ``.vcf.gz`` and ``.vcf.bgz`` (or any file starting with
+    ``##fileformat=VCF``) are read as VCF; BCF must be converted first.
 
     For VCFs, records with FILTER not PASS/. are ignored; if the VCF has a
-    proband column and proband is given, the proband must carry the ALT.
+    proband column and proband is given, the proband must carry the ALT
+    (a warning is printed when the VCF has samples but not the proband).
     """
     if "," in path:
         return set().union(*(load_caller_sites(p, proband) for p in path.split(",")))
+    reject_bcf(path)
     sites = set()
-    if path.endswith((".vcf", ".vcf.gz", ".bcf")):
+    if _is_vcf(path):
         reader = VCFReader(path)
+        if proband and reader.samples and proband not in reader.samples:
+            warn(f"caller file {path}: proband {proband} is not among its samples "
+                 f"({', '.join(reader.samples)}); the proband-carries-ALT check is not applied")
         for r in reader:
             if r.filter not in ("PASS", "."):
                 continue
@@ -142,6 +166,52 @@ def get_pop_af(rec: Record, keys: List[str]) -> Optional[float]:
     return None
 
 
+def has_pop_af(rec: Record, keys: List[str]) -> bool:
+    return any(k in rec.info for k in keys)
+
+
+def _trim_suffix(ref: str, alt: str) -> Tuple[str, str]:
+    """Drop the shared trailing bases (bcftools mpileup writes indels with the
+    whole repeat in REF/ALT)."""
+    while len(ref) > 1 and len(alt) > 1 and ref[-1] == alt[-1]:
+        ref, alt = ref[:-1], alt[:-1]
+    return ref, alt
+
+
+class StrandPileup:
+    """Per-sample strand counts from a ``bcftools mpileup -a AD,ADF,ADR`` VCF.
+
+    GenotypeGVCFs drops FORMAT/SB and HaplotypeCaller writes no ADF/ADR, so
+    the joint trio VCF usually carries no per-sample strand evidence; this
+    pileup of the candidate sites supplies it to Layer 2. Records are matched
+    on chrom/pos and ALT allele (``<*>`` and other symbolic alleles skipped).
+    """
+
+    def __init__(self, path: str):
+        reader = VCFReader(path)
+        self.path = path
+        self.samples = reader.samples
+        self.sites: Dict[Tuple[str, int], List[Record]] = defaultdict(list)
+        for r in reader:
+            self.sites[(genome.bare_chrom(r.chrom), r.pos)].append(r)
+
+    def counts(self, rec: Record, sample: str) -> Optional[Tuple[int, int, int, int]]:
+        """(ref_fwd, ref_rev, alt_fwd, alt_rev) for ``rec``'s ALT, or None."""
+        want = _trim_suffix(rec.ref, rec.alt)
+        for r in self.sites.get((genome.bare_chrom(rec.chrom), rec.pos), []):
+            g = r.samples.get(sample)
+            if g is None:
+                continue
+            adf, adr = int_list(g.fields.get("ADF")), int_list(g.fields.get("ADR"))
+            for i, a in enumerate([r.alt] + r.extra_alts, start=1):
+                if a.startswith("<") or a in ("*", "."):
+                    continue
+                if (a == rec.alt and r.ref == rec.ref) or _trim_suffix(r.ref, a) == want:
+                    if len(adf) > i and len(adr) > i:
+                        return adf[0], adr[0], adf[i], adr[i]
+        return None
+
+
 def is_clinvar_plp(rec: Record, keys: List[str]) -> bool:
     for k in keys:
         v = rec.info.get(k)
@@ -171,40 +241,64 @@ def classify_candidate(rec: Record, trio: Trio, cfg: dict) -> Optional[Candidate
     # Which parents contribute a chromosome here.
     contributing = contributing_parents(cls, trio)
     m = cfg["mosaic"]
-    kid_alt, kid_dp = kid.alt_depth, kid.dp
+    # Binomial tests and CIs use n = sum(AD), the denominator of the VAF.
+    kid_alt, kid_n = kid.alt_depth, kid.ad_total
     kid_has_alt = (kid.called and (kid.alt_count or 0) > 0) or (m["enabled"] and kid_alt >= m["min_alt"])
     if not kid_has_alt:
         return None
 
-    # Parents must not be *called* carriers.
+    def parental_mosaic(g: Genotype) -> bool:
+        """Significant low-level ALT reads (vs sequencing error) in a parent."""
+        return (
+            g.alt_depth >= m["parental_mosaic_min_alt"]
+            and (g.vaf or 0.0) <= m["parental_mosaic_max_vaf"]
+            and stats.binom_sf(g.alt_depth, g.ad_total, m["seq_error"]) < m["parental_mosaic_p"]
+        )
+
+    # Parents must not be *called* carriers - unless a parent called 0/1 has
+    # ALT reads significantly below heterozygous, i.e. a mosaic parent that
+    # the joint caller genotyped as het.
+    mosaic_parents: List[str] = []
+    flags: List[str] = []
     for p in contributing:
         g = rec.samples[p]
         if g.called and (g.alt_count or 0) > 0:
-            return None
+            mosaic_het = (
+                g.ploidy == 2 and g.alt_count == 1 and parental_mosaic(g)
+                and stats.binom_cdf(g.alt_depth, g.ad_total, 0.5) < m["het_binom_p"]
+            )
+            if not mosaic_het:
+                return None  # inherited
+            mosaic_parents.append(p)
+            flags.append("PARENT_CALLED_HET")
 
     track = "germline"
     vaf = kid.vaf or 0.0
-    if ploidy == 2 and kid_dp > 0:
-        p_low = stats.binom_cdf(kid_alt, kid_dp, 0.5)
-        if vaf < cfg["proband"]["het_vaf_min"] or (p_low < m["het_binom_p"] and vaf < 0.40):
+    if ploidy == 2 and kid_n > 0:
+        # One-sided binomial vs 0.5: only a significant deficit routes to the
+        # mosaic track; a low-VAF but non-significant candidate stays germline
+        # (and fails the het VAF range in Layer 1).
+        p_low = stats.binom_cdf(kid_alt, kid_n, 0.5)
+        if p_low < m["het_binom_p"] and vaf < m["max_vaf"]:
             track = "mosaic"
-    elif ploidy == 1 and vaf < cfg["proband"]["hemi_vaf_min"]:
-        track = "mosaic"
+        elif vaf < cfg["proband"]["het_vaf_min"]:
+            flags.append("POSSIBLE_MOSAIC_NEEDS_DEPTH")
+    elif ploidy == 1 and kid_n > 0 and vaf < cfg["proband"]["hemi_vaf_min"]:
+        if stats.binom_cdf(kid_alt, kid_n, 1 - m["seq_error"]) < m["het_binom_p"]:
+            track = "mosaic"
+        else:
+            flags.append("POSSIBLE_MOSAIC_NEEDS_DEPTH")
 
     # Parental mosaicism: significant low-level ALT reads in a parent.
     for p in contributing:
-        g = rec.samples[p]
-        pv = g.vaf or 0.0
-        if (
-            g.alt_depth >= m["parental_mosaic_min_alt"]
-            and pv <= m["parental_mosaic_max_vaf"]
-            and stats.binom_sf(g.alt_depth, g.dp, m["seq_error"]) < m["parental_mosaic_p"]
-        ):
-            track = "parental_mosaic"
+        if p not in mosaic_parents and parental_mosaic(rec.samples[p]):
+            mosaic_parents.append(p)
+    if mosaic_parents:
+        track = "parental_mosaic"
     if track == "mosaic" and not m["enabled"]:
         return None
-    c = Candidate(rec=rec, track=track, ploidy=ploidy)
-    c.proband_vaf_ci = stats.wilson_interval(kid_alt, kid_dp)
+    c = Candidate(rec=rec, track=track, ploidy=ploidy, flags=flags, mosaic_parents=mosaic_parents)
+    c.proband_vaf_ci = stats.wilson_interval(kid_alt, kid_n)
     return c
 
 
@@ -219,6 +313,10 @@ def contributing_parents(cls: str, trio: Trio) -> List[str]:
 # --------------------------------------------------------------------------- #
 # Filter layers
 # --------------------------------------------------------------------------- #
+def parent_ploidy(rec: Record, trio: Trio, sample: str, build: str) -> int:
+    return genome.expected_ploidy(rec.chrom, rec.pos, "male" if sample == trio.father else "female", build)
+
+
 def layer1_genotype(c: Candidate, trio: Trio, cfg: dict, mean_dp: Dict[str, float]) -> None:
     rec, out = c.rec, c.fails["L1_genotype"]
     pb, pa, mo = cfg["proband"], cfg["parent"], cfg["mosaic"]
@@ -226,18 +324,20 @@ def layer1_genotype(c: Candidate, trio: Trio, cfg: dict, mean_dp: Dict[str, floa
     cls = genome.chrom_class(rec.chrom, rec.pos, cfg["build"])
     parents = contributing_parents(cls, trio)
 
-    def dp_cap(sample: str, factor: float) -> float:
+    def dp_cap(sample: str, factor: float, ploidy: int) -> float:
         md = mean_dp.get(sample) or 0
         # Hemizygous regions have half the diploid depth; cap relative to the autosomal mean.
-        return factor * md if md else math.inf
+        return factor * md * ploidy / 2 if md else math.inf
 
     if c.track == "germline" or c.track == "parental_mosaic":
         if (kid.gq or 0) < pb["min_gq"]:
             out.append(f"proband_GQ<{pb['min_gq']}")
+        v = kid.vaf or 0
         if c.ploidy == 2:
-            v = kid.vaf or 0
             if not (pb["het_vaf_min"] <= v <= pb["het_vaf_max"]):
                 out.append("proband_VAF_out_of_het_range")
+        elif v < pb["hemi_vaf_min"]:
+            out.append(f"proband_VAF<{pb['hemi_vaf_min']}")
         if kid.alt_depth < pb["min_alt"]:
             out.append(f"proband_alt<{pb['min_alt']}")
     else:  # mosaic
@@ -247,7 +347,7 @@ def layer1_genotype(c: Candidate, trio: Trio, cfg: dict, mean_dp: Dict[str, floa
             out.append(f"proband_alt<{mo['min_alt']}")
     if kid.dp < pb["min_dp"]:
         out.append(f"proband_DP<{pb['min_dp']}")
-    if kid.dp > dp_cap(trio.proband, pb["max_dp_factor"]):
+    if kid.dp > dp_cap(trio.proband, pb["max_dp_factor"], c.ploidy):
         out.append("proband_DP>cap")
 
     for p in parents:
@@ -258,12 +358,17 @@ def layer1_genotype(c: Candidate, trio: Trio, cfg: dict, mean_dp: Dict[str, floa
             continue
         if (g.gq or 0) < pa["min_gq"]:
             out.append(f"{role}_GQ<{pa['min_gq']}")
-        min_dp = mo["parent_min_dp"] if c.track == "mosaic" else pa["min_dp"]
+        # A hemizygous parent (father on chrX non-PAR / chrY) has half the depth.
+        ploidy = parent_ploidy(rec, trio, p, cfg["build"])
+        if c.track == "mosaic":
+            min_dp = mo["parent_min_dp"] if ploidy == 2 else math.ceil(mo["parent_min_dp"] / 2)
+        else:
+            min_dp = pa["min_dp"] if ploidy == 2 else pa["min_dp_hemizygous"]
         if g.dp < min_dp:
             out.append(f"{role}_DP<{min_dp}")
-        if g.dp > dp_cap(p, pa["max_dp_factor"]):
+        if g.dp > dp_cap(p, pa["max_dp_factor"], ploidy):
             out.append(f"{role}_DP>cap")
-        if c.track == "parental_mosaic":
+        if c.track == "parental_mosaic" and p in c.mosaic_parents:
             continue  # parental ALT reads are the signal here, not a failure
         max_alt = mo["parent_max_alt"] if c.track == "mosaic" else pa["max_alt"]
         if g.alt_depth > max_alt:
@@ -272,9 +377,13 @@ def layer1_genotype(c: Candidate, trio: Trio, cfg: dict, mean_dp: Dict[str, floa
             out.append(f"{role}_VAF>{pa['max_vaf']}")
 
 
-def layer2_read_quality(c: Candidate, trio: Trio, cfg: dict) -> None:
+def layer2_read_quality(c: Candidate, trio: Trio, cfg: dict, strand: Optional[StrandPileup] = None) -> None:
     rec, out, s = c.rec, c.fails["L2_read_quality"], cfg["site"]
     snv = rec.is_snv or rec.is_mnv
+
+    # GATK hard filters / VQSR set in the joint VCF (QD, QUAL, ...).
+    if s["honour_filter"] and rec.filter not in ("PASS", "."):
+        out.append(f"site_filter:{rec.filter}")
 
     def chk(key: str, bad) -> None:
         v = rec.info_float(key)
@@ -290,14 +399,21 @@ def layer2_read_quality(c: Candidate, trio: Trio, cfg: dict) -> None:
 
     kid = rec.samples[trio.proband]
     st = kid.strand_alt()
+    table = None  # refF, refR, altF, altR for the Fisher strand-bias test
+    sb = int_list(kid.fields.get("SB"))
+    if st is not None and len(sb) >= 4:
+        table = tuple(sb[:4])
+    if st is None and strand is not None:
+        # The joint VCF has no per-sample strand counts: use the candidate pileup.
+        table = strand.counts(rec, trio.proband)
+        if table is not None:
+            st = table[2], table[3]
     if st is not None:
         f, r = st
         if f < s["min_alt_per_strand"] or r < s["min_alt_per_strand"]:
             out.append(f"alt_single_strand({f}F/{r}R)")
-        sb = kid.fields.get("SB")
-        if sb and sb != ".":
-            rf, rr, af_, ar = [int(x) for x in sb.split(",")[:4]]
-            p = stats.fisher_exact(rf, rr, af_, ar)
+        if table is not None:
+            p = stats.fisher_exact(*table)
             if p < s["min_strand_fisher_p"]:
                 out.append(f"strand_bias_p={p:.1e}")
     else:
@@ -337,8 +453,11 @@ def layer4_population(c: Candidate, cfg: dict, pon: Dict[str, float], recurrence
         else:
             out.append(f"gnomAD_AF={af:.2e}")
     k = norm_key(rec.chrom, rec.pos, rec.ref, rec.alt)
-    if pon.get(k, 0.0) > pp["pon_max_af"]:
-        out.append(f"panel_of_normals_AF={pon[k]:.3f}")
+    # Panel of normals: --pon VCF and/or the vcfanno-added INFO key (PON_AF).
+    pon_afs = [v for v in (pon.get(k), rec.info_float(pp["pon_info_key"]) if pp["pon_info_key"] else None)
+               if v is not None]
+    if pon_afs and max(pon_afs) > pp["pon_max_af"]:
+        out.append(f"panel_of_normals_AF={max(pon_afs):.3f}")
     n = recurrence.get(k, 0)
     if n >= pp["recurrence_max"]:
         if plp:
@@ -378,13 +497,13 @@ def mosaic_posterior(c: Candidate, trio: Trio, parents: List[str], cfg: dict) ->
     read model: true event at observed VAF vs sequencing error."""
     err = cfg["mosaic"]["seq_error"]
     kid = c.rec.samples[trio.proband]
-    n, k = kid.dp, kid.alt_depth
+    n, k = kid.ad_total, kid.alt_depth
     if n == 0:
         return 0.0
     v = max(k / n, err * 2)
     l_true = stats.log_binom_pmf(k, n, v)
     l_err = stats.log_binom_pmf(k, n, err)
-    prior_true = 1e-3  # candidate already selected on read evidence
+    prior_true = cfg["mosaic"]["prior_true"]  # candidate already selected on read evidence
     lt = l_true + math.log(prior_true)
     le = l_err + math.log(1 - prior_true)
     p_kid = math.exp(lt - stats.logsumexp([lt, le]))
@@ -394,8 +513,8 @@ def mosaic_posterior(c: Candidate, trio: Trio, parents: List[str], cfg: dict) ->
     for p in parents:
         g = c.rec.samples[p]
         # Probability parent does NOT carry at the proband's VAF.
-        l0 = stats.log_binom_pmf(g.alt_depth, g.dp, err)
-        l1 = stats.log_binom_pmf(g.alt_depth, g.dp, v)
+        l0 = stats.log_binom_pmf(g.alt_depth, g.ad_total, err)
+        l1 = stats.log_binom_pmf(g.alt_depth, g.ad_total, v)
         p_par *= math.exp(l0 - stats.logsumexp([l0, l1]))
     return p_kid * p_par
 
@@ -404,17 +523,27 @@ def mosaic_posterior(c: Candidate, trio: Trio, parents: List[str], cfg: dict) ->
 # Consensus / tiers / clustering
 # --------------------------------------------------------------------------- #
 def assign_tier(c: Candidate, n_available: int, cfg: dict) -> str:
+    """Consensus tier of a passing candidate; ``n_available`` = k external callers.
+
+    k == 0: HIGH = posterior >= min_posterior AND hiConfDeNovo (germline only;
+    mosaic tracks are capped at MEDIUM without an independent caller);
+    MEDIUM = posterior >= min_posterior OR hiConfDeNovo; LOW otherwise.
+    k >= 1: HIGH = N_CALLERS >= min(high_min_callers, k) AND (hiConfDeNovo OR
+    posterior >= min_posterior; non-germline tracks need the posterior);
+    MEDIUM = N_CALLERS >= min(medium_min_callers, k); LOW otherwise.
+    """
     if not c.passed:
         return "FAIL"
     cc, pc = cfg["consensus"], cfg["posterior"]
     n = len(c.callers)
     strong = c.posterior is not None and c.posterior >= pc["min_posterior"]
+    germline = c.track == "germline"
     if n_available == 0:
-        if strong and (c.hi_conf or c.track != "germline"):
+        if strong and c.hi_conf and germline:
             return "HIGH"
-        return "MEDIUM" if strong else "LOW"
+        return "MEDIUM" if (strong or c.hi_conf) else "LOW"
     need_high = min(cc["high_min_callers"], n_available)
-    if n >= need_high and (c.hi_conf or strong):
+    if n >= need_high and (strong or (c.hi_conf and germline)):
         return "HIGH"
     if n >= min(cc["medium_min_callers"], n_available):
         return "MEDIUM"
@@ -495,47 +624,123 @@ def run_call(
     pon_path: Optional[str] = None,
     recurrence_path: Optional[str] = None,
     callers: Optional[Dict[str, str]] = None,
+    extra_vcfs: Optional[List[str]] = None,
+    strand_vcf: Optional[str] = None,
 ) -> Dict[str, dict]:
+    """Run the cascade on ``vcf`` for every trio and write the outputs.
+
+    ``extra_vcfs``: supplementary engine VCFs (e.g. normalised DeepTrio/GLnexus,
+    same sample IDs); their records absent from ``vcf`` go through the same
+    cascade flagged SECOND_ENGINE_ONLY. ``strand_vcf``: bcftools mpileup VCF
+    with FORMAT/ADF,ADR at candidate sites, used by Layer 2 when the primary
+    record has no per-sample strand counts.
+    """
+    reader = VCFReader(vcf)
+    members = [s for t in trios for s in (t.proband, t.father, t.mother)]
+    require_samples(reader, members, "PED trio member(s)")
     beds = [IntervalSet.from_bed(p) for p in (exclude_beds or []) + cfg["regions"]["exclude_beds"]]
     fasta = Fasta(fasta_path) if fasta_path else None
     pon = load_site_af(pon_path)
     recurrence = load_recurrence(recurrence_path)
-    samples = {s for t in trios for s in (t.proband, t.father, t.mother)}
+    strand = StrandPileup(strand_vcf) if strand_vcf else None
+    if strand is not None:
+        absent = [t.proband for t in trios if t.proband not in strand.samples]
+        if absent:
+            warn(f"strand VCF {strand_vcf} has no sample(s) {', '.join(absent)}; strand checks rely on the primary VCF")
+    samples = set(members)
     mean_dp = cfg.get("mean_depth") or estimate_mean_depth(vcf, samples)
     if not isinstance(mean_dp, dict):
         mean_dp = {s: float(mean_dp) for s in samples}
 
-    caller_sites = {name: load_caller_sites(path) for name, path in (callers or {}).items()}
+    # External callers, per trio so that a caller VCF's proband column is honoured.
+    callers = callers or {}
+    caller_sites: Dict[str, Dict[str, set]] = {}
+    for t in trios:
+        caller_sites[t.proband] = {name: load_caller_sites(path, t.proband) for name, path in callers.items()}
+        for name, sites in caller_sites[t.proband].items():
+            if not sites:
+                warn(f"caller {name} ({callers[name]}) yielded 0 sites for {t.proband}; check the file, "
+                     f"its FILTER column and sample names")
+
+    # Supplementary engine: keep only its Mendelian-violation candidates; drop
+    # those the primary VCF also contains while scanning it below.
+    extras: Dict[str, Record] = OrderedDict()
+    extra_meta: List[str] = []
+    af_keys = cfg["population"]["af_keys"]
+    for path in extra_vcfs or []:
+        er = VCFReader(path)
+        require_samples(er, members, "PED trio member(s)")
+        extra_meta += [m for m in er.meta if m.startswith(("##INFO=", "##FORMAT=", "##FILTER="))]
+        af_seen = False
+        for rec in er:
+            af_seen = af_seen or has_pop_af(rec, af_keys)
+            k = norm_key(rec.chrom, rec.pos, rec.ref, rec.alt)
+            if k not in extras and any(classify_candidate(rec, t, cfg) is not None for t in trios):
+                extras[k] = rec
+        if not af_seen:
+            warn(f"extra VCF {path} carries none of population.af_keys; the gnomAD filter is inactive for its "
+                 f"SECOND_ENGINE_ONLY candidates")
+
     per_trio: Dict[str, List[Candidate]] = {t.proband: [] for t in trios}
     mie: Dict[str, List[int]] = {t.proband: [0, 0] for t in trios}  # [errors, informative]
+
+    def evaluate(rec: Record, t: Trio, extra: bool = False) -> None:
+        c = classify_candidate(rec, t, cfg)
+        if c is None:
+            return
+        if extra:
+            c.flags.append("SECOND_ENGINE_ONLY")
+        layer1_genotype(c, t, cfg, mean_dp)
+        layer2_read_quality(c, t, cfg, strand)
+        layer3_region(c, cfg, beds, fasta)
+        layer4_population(c, cfg, pon, recurrence)
+        layer5_posterior(c, t, cfg)
+        k = norm_key(rec.chrom, rec.pos, rec.ref, rec.alt)
+        c.callers = sorted(n for n, s in caller_sites[t.proband].items() if k in s)
+        per_trio[t.proband].append(c)
+
     n_sites = 0
-    reader = VCFReader(vcf)
+    pop_af_seen = False
+    chrom_rank: Dict[str, int] = {}
     for rec in reader:
         n_sites += 1
+        pop_af_seen = pop_af_seen or has_pop_af(rec, af_keys)
+        chrom_rank.setdefault(genome.bare_chrom(rec.chrom), len(chrom_rank))
+        if extras:
+            for a in [rec.alt] + rec.extra_alts:
+                extras.pop(norm_key(rec.chrom, rec.pos, rec.ref, a), None)
         for t in trios:
             _count_mie(rec, t, mie[t.proband])
-            c = classify_candidate(rec, t, cfg)
-            if c is None:
-                continue
-            layer1_genotype(c, t, cfg, mean_dp)
-            layer2_read_quality(c, t, cfg)
-            layer3_region(c, cfg, beds, fasta)
-            layer4_population(c, cfg, pon, recurrence)
-            layer5_posterior(c, t, cfg)
-            k = norm_key(rec.chrom, rec.pos, rec.ref, rec.alt)
-            c.callers = sorted(n for n, s in caller_sites.items() if k in s)
-            per_trio[t.proband].append(c)
+            evaluate(rec, t)
+    for rec in extras.values():
+        chrom_rank.setdefault(genome.bare_chrom(rec.chrom), len(chrom_rank))
+        for t in trios:
+            evaluate(rec, t, extra=True)
+    if not pop_af_seen:
+        warn(f"no record in {vcf} carries any of population.af_keys ({', '.join(af_keys)}): the gnomAD "
+             f"population filter (Layer 4) was inactive; annotate the VCF with vcfanno first")
 
+    # Declare the supplementary engines' INFO/FORMAT/FILTER keys the primary lacks.
+    known = {meta_id(m) for m in reader.meta}
+    extra_header = []
+    for m in extra_meta:
+        if meta_id(m) not in known:
+            known.add(meta_id(m))
+            extra_header.append(m)
+
+    q = cfg["qc"]
     summaries: Dict[str, dict] = {}
     for t in trios:
         cands = per_trio[t.proband]
+        if extras:
+            cands.sort(key=lambda c: (chrom_rank[genome.bare_chrom(c.rec.chrom)], c.rec.pos))
         for c in cands:
-            c.tier = assign_tier(c, len(caller_sites), cfg)
+            c.tier = assign_tier(c, len(callers), cfg)
         passing = [c for c in cands if c.passed]
         flag_clusters(passing, cfg["cluster_window_bp"])
         prefix = f"{out_prefix}.{t.proband}" if len(trios) > 1 else out_prefix
         write_tsv(prefix + ".candidates.tsv", [candidate_row(c, t) for c in cands], TSV_COLUMNS)
-        with VCFWriter(prefix + ".dnm.vcf", reader, INFO_HEADER, samples=[t.proband, t.father, t.mother]) as w:
+        with VCFWriter(prefix + ".dnm.vcf", reader, extra_header + INFO_HEADER, samples=[t.proband, t.father, t.mother]) as w:
             for c in passing:
                 r = c.rec
                 kid = r.samples[t.proband]
@@ -554,6 +759,8 @@ def run_call(
         for layer in LAYERS:
             remaining -= first.get(layer, 0)
             waterfall[f"after_{layer}"] = remaining
+        n_err, n_inf = mie[t.proband]
+        rate = round(n_err / n_inf, 4) if n_inf else None
         summary = {
             "proband": t.proband,
             "father": t.father,
@@ -561,15 +768,29 @@ def run_call(
             "proband_sex": t.proband_sex,
             "sites_scanned": n_sites,
             "mean_depth": mean_dp,
-            "callers_available": sorted(caller_sites),
+            "callers_available": sorted(callers),
+            "caller_sites": {name: len(s) for name, s in caller_sites[t.proband].items()},
+            "extra_vcfs": list(extra_vcfs or []),
+            "second_engine_only_candidates": sum(1 for c in cands if "SECOND_ENGINE_ONLY" in c.flags),
+            "strand_vcf": strand_vcf,
+            "population_af_missing": not pop_af_seen,
             "waterfall": waterfall,
             "passing_by_track": dict(Counter(c.track for c in passing)),
             "passing_by_tier": dict(Counter(c.tier for c in passing)),
             "parental_leakage": parental_leakage(passing, t),
-            "raw_mendelian_error_rate": round(mie[t.proband][0] / mie[t.proband][1], 4) if mie[t.proband][1] else None,
+            "raw_mendelian_error_rate": rate,
+            "raw_mendelian_informative_sites": n_inf,
+            # FAIL halts `trio-dnm call` (exit 3) unless --no-halt; NOT_EVALUATED
+            # when fewer than qc.mie_min_sites informative sites were seen.
+            "mendelian_error_gate": (
+                "NOT_EVALUATED" if rate is None or n_inf < q["mie_min_sites"]
+                else ("FAIL" if rate > q["mie_max_rate"] else "PASS")
+            ),
         }
-        if summary["raw_mendelian_error_rate"] and summary["raw_mendelian_error_rate"] > 0.05:
-            summary["qc_warning"] = "raw Mendelian error rate > 5% – suspect sample swap or contamination"
+        if rate and rate > q["mie_max_rate"]:
+            summary["qc_warning"] = (f"raw Mendelian error rate > {q['mie_max_rate']:.0%} – suspect sample swap "
+                                     f"or contamination")
+        summary["config"] = cfg
         with open(prefix + ".call_summary.json", "w") as fh:
             json.dump(summary, fh, indent=2)
         summaries[t.proband] = summary

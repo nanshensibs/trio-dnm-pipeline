@@ -1,6 +1,8 @@
 """Default thresholds. Every value can be overridden with a JSON file
 (``--config my.json``) whose keys are deep-merged over these defaults; see
-``conf/defaults.json`` for the same structure written out in full.
+``conf/defaults.json`` for the same structure written out in full. Put only
+the keys you change in ``--config`` (see ``load_config`` for how a full copy
+of the defaults interacts with the data-type presets).
 
 Defaults are tuned for 30x PCR-free WGS. ``DATA_TYPE_PRESETS`` holds the
 adjustments applied when ``--data-type wes`` or ``panel`` is given.
@@ -30,6 +32,9 @@ DEFAULTS: Dict[str, Any] = {
         "max_dp_factor": 2.0,
         "max_alt": 1,
         "max_vaf": 0.05,
+        # A hemizygous parent (father on chrX non-PAR for a female proband, or on
+        # chrY) has half the diploid depth and would show VAF ~1 if a carrier.
+        "min_dp_hemizygous": 8,
     },
     "site": {
         "min_mq": 40.0,
@@ -44,6 +49,7 @@ DEFAULTS: Dict[str, Any] = {
         "min_strand_fisher_p": 1e-3,
         "max_softclip_frac": 0.30,
         "softclip_info_key": "SCF",
+        "honour_filter": True,  # FILTER other than PASS/. fails Layer 2 (site_filter:<FILTER>)
     },
     "regions": {
         "exclude_beds": [],
@@ -56,6 +62,7 @@ DEFAULTS: Dict[str, Any] = {
         "af_keys": ["gnomAD_AF", "gnomADg_AF", "gnomADe_AF", "gnomad_AF", "AF_gnomad", "gnomAD_joint_AF"],
         "max_af": 1e-4,
         "pon_max_af": 0.01,
+        "pon_info_key": "PON_AF",  # vcfanno-added panel-of-normals AF (conf/vcfanno.toml)
         "recurrence_max": 5,
         "clinvar_keys": ["CLNSIG", "ClinVar_CLNSIG"],
     },
@@ -74,6 +81,8 @@ DEFAULTS: Dict[str, Any] = {
         "parent_min_dp": 30,
         "parent_max_alt": 0,
         "het_binom_p": 1e-3,
+        "max_vaf": 0.40,  # route to the mosaic track only below this VAF (and binomial p < het_binom_p)
+        "prior_true": 1e-3,  # mosaic read-model prior that the ALT reads are real
         "seq_error": 0.005,
         "parental_mosaic_min_alt": 2,
         "parental_mosaic_max_vaf": 0.25,
@@ -84,6 +93,21 @@ DEFAULTS: Dict[str, Any] = {
         "medium_min_callers": 2,
     },
     "cluster_window_bp": 20000,
+    # Stage-1 stop-gates (`trio-dnm qc-gate`) and the post-calling Mendelian gate.
+    "qc": {
+        "freemix_warn": 0.02,
+        "freemix_fail": 0.05,
+        "parent_child_relatedness": [0.40, 0.60],  # somalier 'relatedness' (~ 2 x kinship)
+        "parent_child_max_ibs0": 0.005,  # fraction of informative sites
+        "unrelated_max_relatedness": 0.10,  # parents, unless consanguinity is declared
+        "min_mean_depth": {"wgs": 28.0, "wes": 80.0, "panel": 200.0},
+        "male_y_ratio": 0.10,  # Y depth / autosomal depth above which a sample is male
+        "male_max_x_het": 0.05,  # X_het / X_n below which a Y-positive sample is male
+        # `trio-dnm call` halts (exit 3) above this raw autosomal Mendelian
+        # error rate once enough informative sites have been seen.
+        "mie_max_rate": 0.05,
+        "mie_min_sites": 1000,
+    },
     # Biological sanity-check expectations (per trio).
     "expectations": {
         "wgs": {"snv": [45, 95], "indel": [3, 12], "hard_low": 30, "hard_high": 150},
@@ -161,8 +185,10 @@ DATA_TYPE_PRESETS: Dict[str, Dict[str, Any]] = {
     "wgs": {},
     # Capture data is deeper but less uniform: require more read support, and
     # deeper parents before asserting absence at low VAF.
-    "wes": {"proband": {"min_dp": 20, "min_alt": 7}, "parent": {"min_dp": 20}, "mosaic": {"parent_min_dp": 50}},
-    "panel": {"proband": {"min_dp": 50, "min_alt": 10}, "parent": {"min_dp": 50}, "mosaic": {"vaf_min": 0.02, "parent_min_dp": 100}},
+    "wes": {"proband": {"min_dp": 20, "min_alt": 7}, "parent": {"min_dp": 20, "min_dp_hemizygous": 10},
+            "mosaic": {"parent_min_dp": 50}},
+    "panel": {"proband": {"min_dp": 50, "min_alt": 10}, "parent": {"min_dp": 50, "min_dp_hemizygous": 25},
+              "mosaic": {"vaf_min": 0.02, "parent_min_dp": 100}},
 }
 
 
@@ -176,7 +202,34 @@ def deep_merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def diff_from(over: Dict[str, Any], base: Dict[str, Any]) -> Dict[str, Any]:
+    """The part of ``over`` whose values differ from ``base`` (recursively)."""
+    out: Dict[str, Any] = {}
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            sub = diff_from(v, base[k])
+            if sub:
+                out[k] = sub
+        elif k not in base or base[k] != v:
+            out[k] = copy.deepcopy(v)
+    return out
+
+
 def load_config(path: Optional[str] = None, data_type: Optional[str] = None, **overrides) -> Dict[str, Any]:
+    """Effective configuration: ``DEFAULTS`` -> data-type preset -> user file -> overrides.
+
+    The data type is the explicit ``data_type`` argument (``--data-type``) if
+    given, otherwise the file's ``data_type``, otherwise ``wgs``; an explicit
+    ``--data-type`` always wins over the file.
+
+    Only the user-file values that *differ from* ``DEFAULTS`` are applied over
+    the preset. A full copy of ``conf/defaults.json`` with a few edits therefore
+    keeps the WES/panel preset for every key it did not change, instead of
+    silently reverting it to the WGS defaults. The flip side: a value equal to
+    the WGS default cannot override a preset; use a different value (or
+    ``--data-type wgs``). Keyword ``overrides`` (e.g. ``build``) are set last
+    when not None.
+    """
     cfg = copy.deepcopy(DEFAULTS)
     user: Dict[str, Any] = {}
     if path:
@@ -184,7 +237,7 @@ def load_config(path: Optional[str] = None, data_type: Optional[str] = None, **o
             user = json.load(fh)
     dt = data_type or user.get("data_type") or cfg["data_type"]
     cfg = deep_merge(cfg, DATA_TYPE_PRESETS.get(dt, {}))
-    cfg = deep_merge(cfg, user)
+    cfg = deep_merge(cfg, diff_from(user, DEFAULTS))
     cfg["data_type"] = dt
     for k, v in overrides.items():
         if v is not None:
