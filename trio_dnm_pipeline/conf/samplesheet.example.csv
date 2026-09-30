@@ -1,0 +1,5 @@
+family_id,sample_id,role,sex,bam
+FAM001,FAM001_P,proband,female,/data/bam/FAM001_P.cram
+FAM001,FAM001_F,father,male,/data/bam/FAM001_F.cram
+FAM001,FAM001_M,mother,female,/data/bam/FAM001_M.cram
+FAM001,FAM001_T,tumor,female,/data/bam/FAM001_T.cram

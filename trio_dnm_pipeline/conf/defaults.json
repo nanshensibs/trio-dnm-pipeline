@@ -1,0 +1,283 @@
+{
+  "build": "GRCh38",
+  "data_type": "wgs",
+  "mean_depth": null,
+  "proband": {
+    "min_gq": 20,
+    "min_dp": 10,
+    "max_dp_factor": 2.0,
+    "min_alt": 5,
+    "het_vaf_min": 0.3,
+    "het_vaf_max": 0.7,
+    "hemi_vaf_min": 0.85
+  },
+  "parent": {
+    "min_gq": 20,
+    "min_dp": 15,
+    "max_dp_factor": 2.0,
+    "max_alt": 1,
+    "max_vaf": 0.05
+  },
+  "site": {
+    "min_mq": 40.0,
+    "max_fs_snv": 60.0,
+    "max_fs_indel": 200.0,
+    "max_sor_snv": 3.0,
+    "max_sor_indel": 10.0,
+    "min_mqranksum": -12.5,
+    "min_readposranksum_snv": -8.0,
+    "min_readposranksum_indel": -20.0,
+    "min_alt_per_strand": 1,
+    "min_strand_fisher_p": 0.001,
+    "max_softclip_frac": 0.3,
+    "softclip_info_key": "SCF"
+  },
+  "regions": {
+    "exclude_beds": [],
+    "max_homopolymer_snv": 7,
+    "max_homopolymer_indel": 5,
+    "n_pad": 5,
+    "exclude_mt": true
+  },
+  "population": {
+    "af_keys": [
+      "gnomAD_AF",
+      "gnomADg_AF",
+      "gnomADe_AF",
+      "gnomad_AF",
+      "AF_gnomad",
+      "gnomAD_joint_AF"
+    ],
+    "max_af": 0.0001,
+    "pon_max_af": 0.01,
+    "recurrence_max": 5,
+    "clinvar_keys": [
+      "CLNSIG",
+      "ClinVar_CLNSIG"
+    ]
+  },
+  "posterior": {
+    "mu_snv": 1.2e-08,
+    "mu_indel": 1e-09,
+    "af_floor": 0.0001,
+    "min_posterior": 0.95,
+    "min_posterior_multicaller": 0.8,
+    "read_error": 0.01
+  },
+  "mosaic": {
+    "enabled": true,
+    "vaf_min": 0.05,
+    "min_alt": 3,
+    "parent_min_dp": 30,
+    "parent_max_alt": 0,
+    "het_binom_p": 0.001,
+    "seq_error": 0.005,
+    "parental_mosaic_min_alt": 2,
+    "parental_mosaic_max_vaf": 0.25,
+    "parental_mosaic_p": 0.0001
+  },
+  "consensus": {
+    "high_min_callers": 3,
+    "medium_min_callers": 2
+  },
+  "cluster_window_bp": 20000,
+  "expectations": {
+    "wgs": {
+      "snv": [
+        45,
+        95
+      ],
+      "indel": [
+        3,
+        12
+      ],
+      "hard_low": 30,
+      "hard_high": 150
+    },
+    "wes": {
+      "snv": [
+        0.5,
+        2.5
+      ],
+      "indel": [
+        0,
+        1
+      ],
+      "hard_low": 0,
+      "hard_high": 5
+    },
+    "panel": {
+      "snv": [
+        0,
+        1
+      ],
+      "indel": [
+        0,
+        1
+      ],
+      "hard_low": 0,
+      "hard_high": 2
+    },
+    "titv": {
+      "wgs": [
+        1.7,
+        2.5
+      ],
+      "wes": [
+        2.2,
+        3.5
+      ]
+    },
+    "paternal_fraction": [
+      0.65,
+      0.9
+    ],
+    "cpg_fraction_snv": [
+      0.1,
+      0.25
+    ],
+    "age_model": {
+      "intercept": 6.0,
+      "paternal": 1.51,
+      "maternal": 0.37
+    }
+  },
+  "annotation": {
+    "pp3_tool": "REVEL",
+    "calibration": {
+      "REVEL": {
+        "pp3": [
+          0.644,
+          0.773,
+          0.932,
+          null
+        ],
+        "bp4": [
+          0.29,
+          0.183,
+          0.052,
+          0.003
+        ]
+      },
+      "CADD_PHRED": {
+        "pp3": [
+          25.3,
+          28.1,
+          null,
+          null
+        ],
+        "bp4": [
+          22.7,
+          17.3,
+          null,
+          null
+        ]
+      },
+      "BayesDel_noAF": {
+        "pp3": [
+          0.13,
+          0.27,
+          0.41,
+          null
+        ],
+        "bp4": [
+          -0.18,
+          -0.36,
+          null,
+          null
+        ]
+      },
+      "AlphaMissense": {
+        "pp3": [
+          0.792,
+          0.906,
+          0.99,
+          null
+        ],
+        "bp4": [
+          0.169,
+          0.099,
+          null,
+          null
+        ]
+      }
+    },
+    "spliceai_pp3": 0.2,
+    "spliceai_bp4": 0.1,
+    "spliceai_high": 0.5,
+    "pm2_max_af": 1e-05,
+    "ba1_af": 0.05,
+    "bs1_af": 0.001,
+    "loeuf_constrained": 0.6,
+    "pli_constrained": 0.9,
+    "misz_constrained": 3.09,
+    "shet_constrained": 0.1,
+    "lof_consequences": [
+      "stop_gained",
+      "frameshift_variant",
+      "splice_donor_variant",
+      "splice_acceptor_variant",
+      "start_lost",
+      "transcript_ablation"
+    ],
+    "missense_consequences": [
+      "missense_variant",
+      "inframe_insertion",
+      "inframe_deletion",
+      "protein_altering_variant"
+    ],
+    "de_novo_code": "auto"
+  },
+  "somatic": {
+    "tumor_min_dp": 20,
+    "tumor_min_alt": 4,
+    "tumor_min_vaf": 0.05,
+    "normal_min_dp": 10,
+    "normal_max_alt": 1,
+    "normal_max_vaf": 0.02,
+    "max_pop_af": 0.001,
+    "min_callers": 2,
+    "ffpe_max_vaf": 0.1,
+    "clonal_ccf": 0.8,
+    "coding_mb": 30.0,
+    "tmb_high": 10.0
+  },
+  "ch": {
+    "min_vaf": 0.02,
+    "max_vaf": 0.35,
+    "min_alt": 3,
+    "genes": [
+      "DNMT3A",
+      "TET2",
+      "ASXL1",
+      "PPM1D",
+      "TP53",
+      "JAK2",
+      "SF3B1",
+      "SRSF2",
+      "U2AF1",
+      "ZRSR2",
+      "CBL",
+      "GNB1",
+      "GNAS",
+      "IDH1",
+      "IDH2",
+      "BCOR",
+      "BCORL1",
+      "STAG2",
+      "KRAS",
+      "NRAS",
+      "CHEK2",
+      "RAD21",
+      "BRCC3",
+      "CALR",
+      "MPL",
+      "SH2B3",
+      "KMT2D",
+      "EZH2",
+      "RUNX1",
+      "PHF6",
+      "DUSP22"
+    ]
+  }
+}
