@@ -174,6 +174,9 @@ DEFAULTS: Dict[str, Any] = {
         "clonal_ccf": 0.8,
         "coding_mb": 30.0,  # callable coding territory used for TMB (Mb)
         "tmb_high": 10.0,
+        # Below this many PASS SNVs a full-catalogue signature refit over-fits:
+        # it is skipped unless --signature-subset restricts the catalogue.
+        "min_snv_full_refit": 50,
     },
     "ch": {
         "min_vaf": 0.02,

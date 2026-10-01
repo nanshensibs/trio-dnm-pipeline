@@ -84,7 +84,10 @@ def cmd_somatic(a) -> int:
 def cmd_ch(a) -> int:
     from .somatic import run_ch_screen
 
-    res = run_ch_screen(a.vcf, a.samples.split(","), _cfg(a), a.out)
+    samples = [s.strip() for s in a.samples.split(",") if s.strip()]
+    if not samples:
+        raise SystemExit("--samples: no sample IDs given")
+    res = run_ch_screen(a.vcf, samples, _cfg(a), a.out, a.gene_info_key)
     print(json.dumps(res, indent=2))
     return 0
 
@@ -212,14 +215,17 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--trio-vcf")
     s.add_argument("--father")
     s.add_argument("--mother")
-    s.add_argument("--purity", type=float)
+    s.add_argument("--purity", type=float, help="tumour purity in (0, 1]; enables CCF, multiplicity and clonality")
     s.add_argument("--segments", help="allele-specific CN segments TSV")
     s.add_argument("--gene-table")
-    s.add_argument("--germline-annotated", help="*.annotated.tsv from `annotate` for two-hit analysis")
+    s.add_argument("--germline-annotated",
+                   help="*.annotated.tsv from `annotate` (Tier1/2 or P/LP rows) for two-hit analysis; "
+                        "writes <out>.two_hit.tsv")
     s.add_argument("--fasta")
     s.add_argument("--signatures")
-    s.add_argument("--signature-subset")
-    s.add_argument("--ffpe", action="store_true")
+    s.add_argument("--signature-subset",
+                   help="comma-separated signatures to refit; required for a refit below somatic.min_snv_full_refit SNVs")
+    s.add_argument("--ffpe", action="store_true", help="flag (not filter) C>T/G>A SNVs at VAF <= somatic.ffpe_max_vaf")
     s.set_defaults(func=cmd_somatic)
 
     h = sub.add_parser("ch-screen", help="clonal haematopoiesis screen of blood samples")
@@ -227,6 +233,9 @@ def build_parser() -> argparse.ArgumentParser:
     h.add_argument("--vcf", required=True)
     h.add_argument("--samples", required=True, help="comma-separated sample IDs")
     h.add_argument("--out", required=True)
+    h.add_argument("--gene-info-key", default="GENE",
+                   help="INFO key holding the gene symbol when the VCF has no CSQ header "
+                        "(impact filter then skipped; default GENE)")
     h.set_defaults(func=cmd_ch)
 
     g = sub.add_parser("signatures", help="SBS-96 spectrum and signature refit for any VCF")
