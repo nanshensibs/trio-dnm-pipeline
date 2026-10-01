@@ -77,9 +77,12 @@ def write_html(path: str, result: Dict, rows: List[Dict]) -> None:
         gate = cs.get("mendelian_error_gate")
         if gate:
             rate = cs.get("raw_mendelian_error_rate")
-            cls = "warn" if gate == "FAIL" else "muted"
+            cls = "warn" if gate == "FAIL" or cs.get("qc_warning") else "muted"
             parts.append(f"<p class='{cls}'>Raw Mendelian error gate: {_esc(gate)} (rate {_esc(rate)}, "
                          f"{_esc(cs.get('raw_mendelian_informative_sites'))} informative sites).</p>")
+            if cs.get("qc_warning"):
+                note = " (too few informative sites for the stop-gate to apply)" if gate == "NOT_EVALUATED" else ""
+                parts.append(f"<p class='warn'>{_esc(cs['qc_warning'])}{_esc(note)}</p>")
         if cs.get("population_af_missing"):
             parts.append("<p class='warn'>No gnomAD allele-frequency annotation was found in the input VCF: the population filter (Layer 4) was inactive.</p>")
         if cs.get("second_engine_only_candidates"):

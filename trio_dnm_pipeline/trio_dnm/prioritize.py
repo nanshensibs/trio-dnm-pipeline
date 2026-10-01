@@ -69,6 +69,11 @@ def run_annotate(
     call_summary: Optional[str] = None,
 ) -> Dict[str, object]:
     genes = annot.load_gene_table(gene_table)
+    # Resolve the signature matrix before writing anything, so a bad matrix cannot
+    # leave a partial result set behind.
+    sig_matrix = None
+    if signatures_path:
+        sig_matrix = signatures.load_signatures(signatures_path, signature_subset or signatures.GERMLINE_SIGNATURES)
     pheno = annot.load_scores(phenotype_scores)
     validated = load_validated(validated_path)
     fasta = Fasta(fasta_path) if fasta_path else None
@@ -127,7 +132,7 @@ def run_annotate(
         counts = signatures.spectrum(snvs, fasta)
         signatures.write_spectrum(out_prefix + ".sbs96.tsv", counts)
         if signatures_path:
-            names, mats = signatures.load_signatures(signatures_path, signature_subset or signatures.GERMLINE_SIGNATURES)
+            names, mats = sig_matrix
             sig_result = signatures.refit(counts, names, mats)
         san["sbs96"] = counts
     if sig_result:

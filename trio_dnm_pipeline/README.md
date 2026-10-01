@@ -48,7 +48,13 @@ python -m pytest -q                                  # the test suite; no depend
 
 # post-calling only. trio.anno.vcf.gz = joint, normalised trio VCF annotated by vcfanno
 # (conf/vcfanno.toml: gnomAD_AF, PON_AF, ClinVar); without gnomAD INFO, `call` warns and
-# records population_af_missing. Strand counts come from a pileup of the candidate sites:
+# records population_af_missing. Strand counts come from a pileup of the candidate sites
+# (proband carries ALT, both parents hom-ref; same recipe as CANDIDATE_SITES in modules/dnm.nf):
+bcftools view -s proband,father,mother trio.anno.vcf.gz -Ou \
+  | bcftools view -i 'GT[0]!="RR" && GT[0]!="mis" && GT[1]="RR" && GT[2]="RR"' -Ou \
+  | bcftools query -f '%CHROM\t%POS\n' > cand_sites.tsv
+# Sample names in the pileup must equal the PED IDs: if the BAM @RG SM tags differ, pass
+# -G read_groups.txt (lines "* <bam> <PED id>"), as MPILEUP_CANDIDATES does.
 bcftools mpileup -f GRCh38.fa -R cand_sites.tsv -a AD,ADF,ADR,DP -Oz -o FAM001.strand.vcf.gz \
     proband.bam father.bam mother.bam
 bin/trio-dnm call --vcf trio.anno.vcf.gz --ped trio.ped --fasta GRCh38.fa \
@@ -60,8 +66,10 @@ bin/trio-dnm annotate --vcf FAM001.vep.vcf --call-summary FAM001.call_summary.js
     --gene-table genes.tsv --fasta GRCh38.fa --signatures COSMIC_v3.4_SBS_GRCh38.txt \
     --paternal-age 34 --maternal-age 31 --out FAM001
 
-# workflow: stub dry run on bundled placeholder inputs, then a real run
+# workflow: stub dry runs on bundled placeholder inputs (BAM input, then FASTQ input via modules/align.nf),
+# then a real run
 nextflow run main.nf -stub -profile test_stub
+nextflow run main.nf -stub -profile test_stub -params-file tests/nextflow/params_fastq.yaml
 nextflow run main.nf -profile docker -params-file params.yaml   # your paths for the params in nextflow.config
 ```
 
@@ -78,11 +86,14 @@ nextflow run main.nf -profile docker -params-file params.yaml   # your paths for
 * **Signature matrix** (`--signatures`): COSMIC SBS v3.4 GRCh38 TSV. Germline DNMs are refit to SBS1 + SBS5 + SBS40a
   by default. COSMIC v3.4 split SBS40 into SBS40a/b/c; a requested name missing from the matrix is resolved with a
   warning (SBS40 → SBS40a).
-* **Resource bundle** for Nextflow (`nextflow.config` → `params`, under `params.resource_dir`): VEP cache + plugin data,
-  gnomAD v4.1 joint sites (`AF_joint`, `AF_grpmax_joint`), ClinVar, exclusion BEDs, Mutect2 germline resource/PoN,
-  somalier sites, VerifyBamID2 SVD, MosaicForecast model. `trio-dnm` tasks run with the project directory and
-  `params.resource_dir` mounted read-only into the container, or in a trio-dnm image built from the provided
-  Dockerfile (see `nextflow.config`).
+* **Resource bundle** for Nextflow: one `params` entry per resource in `nextflow.config` (VEP cache + plugin data,
+  gnomAD v4.1 joint sites with `AF_joint`/`AF_grpmax_joint`, ClinVar, exclusion BEDs, Mutect2 germline resource/PoN,
+  somalier sites, VerifyBamID2 SVD, MosaicForecast model, ...), set in your `-params-file`. Every resource (with any
+  index next to it) is staged into the tasks as a `path` input, so Nextflow makes it visible inside Docker or
+  Singularity containers and no bind mounts are needed — do **not** add `-v` mounts to `docker.runOptions`
+  (Docker aborts on duplicate mount points). `trio-dnm` tasks stage the `trio_dnm` package into the task
+  directory and put it on `PYTHONPATH`, so they run in any python ≥ 3.10 image (default `python:3.11`) or in the
+  image built from the provided `Dockerfile` (see the header of `nextflow.config`).
 
 Pipeline provenance (Nextflow trace, timeline, report, DAG and a provenance JSON) is written to
 `results/pipeline_info/`; a MultiQC report aggregates the QC at the end of the run.
@@ -94,9 +105,11 @@ Pipeline provenance (Nextflow trace, timeline, report, DAG and a provenance JSON
   tool documentation and the literature. The tests cover a synthetic trio (true DNM, parental leakage, parental
   mosaic, proband mosaic, common variant, masked region, homopolymer, low MQ, inherited, male chrX hemizygous DNM),
   annotation/ACMG scenarios, somatic/CH scenarios and the QC gates.
-* **Not verified**: the Nextflow workflow has **never been executed end-to-end** (Nextflow was not available when it
-  was written or reviewed). Every process has a `stub:` block, so `nextflow run main.nf -stub -profile test_stub`
-  is the first thing to run to check channel wiring. Then validate on GIAB trio HG002/HG003/HG004 (DNM count and
+  The Nextflow wiring is verified by stub dry runs on Nextflow 24.10.4 — BAM input (51 tasks) and FASTQ input via
+  `modules/align.nf` (114 tasks) both complete without failures; `tests/test_bin_fixes.py` repeats them whenever
+  `nextflow` is on `PATH`.
+* **Not verified**: the workflow has **never been executed with the real tools on real data**. Validate it on GIAB
+  trio HG002/HG003/HG004 (DNM count and
   spectrum, Mendelian error rate, strand-pileup matching, DeepTrio-only candidates, DeNovoGear on the candidate VCF)
   and on a tumour–normal reference pair before production use.
 * Container tags in `nextflow.config` are indicative. Verify each exists and pin by digest.

@@ -40,7 +40,7 @@ def cmd_call(a) -> int:
                    extra_vcfs=a.extra_vcf, strand_vcf=a.strand_vcf)
     for p, s in res.items():
         print(f"{p}: {s['passing_by_track']} tiers={s['passing_by_tier']}")
-    # Stop-gate: raw Mendelian error rate (protocol Table 4); outputs are already written.
+    # Stop-gate: raw Mendelian error rate (protocol §3.3 stop-gates); outputs are already written.
     halted = [p for p, s in res.items() if s["mendelian_error_gate"] == "FAIL"]
     q = cfg["qc"]
     for p in halted:
@@ -273,7 +273,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except FileNotFoundError as e:
+        print(f"trio-dnm: {e.strerror}: {e.filename}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

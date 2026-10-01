@@ -1,4 +1,4 @@
-"""Stage 10: somatic mutation analysis.
+"""Stage 9 (protocol §11): somatic mutation analysis; clonal-haematopoiesis screen §11.7.
 
 Three use cases share this module:
 
@@ -40,14 +40,19 @@ def load_segments(path: Optional[str]) -> Dict[str, List[dict]]:
         for line in fh:
             row = dict(zip(header, line.rstrip("\n").split("\t")))
             c = genome.bare_chrom(row.get("chrom") or row.get("chromosome", ""))
-            tc = to_float(row.get("total_cn") or row.get("tcn"))
+            tc = _finite(to_float(row.get("total_cn") or row.get("tcn")))
             segs[c].append({
                 "start": int(float(row["start"])), "end": int(float(row["end"])),
                 # total_cn 0 is a homozygous deletion; default to diploid only when missing.
                 "total_cn": 2.0 if tc is None else tc,
-                "minor_cn": to_float(row.get("minor_cn") or row.get("lcn")),
+                "minor_cn": _finite(to_float(row.get("minor_cn") or row.get("lcn"))),
             })
     return segs
+
+
+def _finite(x: Optional[float]) -> Optional[float]:
+    """'nan'/'inf' (as written by pandas/R for missing values) count as missing."""
+    return x if x is not None and math.isfinite(x) else None
 
 
 def segment_at(segs: Dict[str, List[dict]], chrom: str, pos: int) -> Optional[dict]:

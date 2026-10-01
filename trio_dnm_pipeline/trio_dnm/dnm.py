@@ -284,8 +284,12 @@ def classify_candidate(rec: Record, trio: Trio, cfg: dict) -> Optional[Candidate
         elif vaf < cfg["proband"]["het_vaf_min"]:
             flags.append("POSSIBLE_MOSAIC_NEEDS_DEPTH")
     elif ploidy == 1 and kid_n > 0 and vaf < cfg["proband"]["hemi_vaf_min"]:
-        if stats.binom_cdf(kid_alt, kid_n, 1 - m["seq_error"]) < m["het_binom_p"]:
+        # A het-like VAF on a hemizygous chromosome suggests aneuploidy (e.g. XXY) or a
+        # paralog artefact rather than mosaicism: route only clearly sub-clonal events.
+        if stats.binom_cdf(kid_alt, kid_n, 1 - m["seq_error"]) < m["het_binom_p"] and vaf < m["max_vaf"]:
             track = "mosaic"
+        elif m["max_vaf"] <= vaf <= cfg["proband"]["het_vaf_max"]:
+            flags.append("HEMIZYGOUS_HET_LIKE")
         else:
             flags.append("POSSIBLE_MOSAIC_NEEDS_DEPTH")
 
@@ -702,20 +706,29 @@ def run_call(
     n_sites = 0
     pop_af_seen = False
     chrom_rank: Dict[str, int] = {}
+    # extra-VCF key -> probands for which the primary VCF already covers the site
+    # (evaluated per trio, so a joint cohort VCF does not hide one trio's second-engine call).
+    covered: Dict[str, set] = defaultdict(set)
     for rec in reader:
         n_sites += 1
         pop_af_seen = pop_af_seen or has_pop_af(rec, af_keys)
         chrom_rank.setdefault(genome.bare_chrom(rec.chrom), len(chrom_rank))
-        if extras:
-            for a in [rec.alt] + rec.extra_alts:
-                extras.pop(norm_key(rec.chrom, rec.pos, rec.ref, a), None)
+        keys = [norm_key(rec.chrom, rec.pos, rec.ref, a) for a in [rec.alt] + rec.extra_alts] if extras else []
         for t in trios:
             _count_mie(rec, t, mie[t.proband])
+            before = len(per_trio[t.proband])
             evaluate(rec, t)
-    for rec in extras.values():
+            kid = rec.samples.get(t.proband)
+            # The primary covers this trio at this site if it made a candidate or calls the proband non-ref.
+            if len(per_trio[t.proband]) > before or (kid is not None and kid.called and (kid.alt_count or 0) > 0):
+                for k in keys:
+                    if k in extras:
+                        covered[k].add(t.proband)
+    for k, rec in extras.items():
         chrom_rank.setdefault(genome.bare_chrom(rec.chrom), len(chrom_rank))
         for t in trios:
-            evaluate(rec, t, extra=True)
+            if t.proband not in covered.get(k, ()):
+                evaluate(rec, t, extra=True)
     if not pop_af_seen:
         warn(f"no record in {vcf} carries any of population.af_keys ({', '.join(af_keys)}): the gnomAD "
              f"population filter (Layer 4) was inactive; annotate the VCF with vcfanno first")

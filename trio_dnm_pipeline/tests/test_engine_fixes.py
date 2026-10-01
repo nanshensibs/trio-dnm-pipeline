@@ -159,13 +159,15 @@ def test_hemizygous_mosaic_routing_and_dp_cap(tmp_path):
     x = dict(chrom="chrX", info="MQ=60;FS=1;SOR=0.7;gnomAD_AF=0")
     vcf, ped = write_trio(tmp_path, [
         row(3_000_100, g("1", 1, 15), g("0/0", 18, 0), g("0/0", 30, 0), **x),   # germline hemizygous
-        row(3_000_200, g("0/1", 10, 10), g("0/0", 18, 0), g("0/0", 30, 0), **x),  # VAF 0.5, significant: mosaic
+        row(3_000_200, g("0/1", 10, 10), g("0/0", 18, 0), g("0/0", 30, 0), **x),  # VAF 0.5: het-like, not mosaic
+        row(3_000_250, g("0/1", 16, 4), g("0/0", 18, 0), g("0/0", 30, 0), **x),   # VAF 0.2, significant: mosaic
         row(3_000_300, g("1", 1, 5), g("0/0", 18, 0), g("0/0", 30, 0), **x),    # VAF 0.83, n=6: not significant
         row(3_000_400, g("1", 0, 40), g("0/0", 18, 0), g("0/0", 30, 0), **x),   # DP 40 > hemizygous cap 30
     ])
     rows, _ = call(tmp_path, vcf, ped)
     assert rows[3_000_100]["track"] == "germline" and rows[3_000_100]["pass"] == "True"
-    assert rows[3_000_200]["track"] == "mosaic"
+    assert rows[3_000_200]["track"] == "germline" and "HEMIZYGOUS_HET_LIKE" in rows[3_000_200]["flags"]
+    assert rows[3_000_250]["track"] == "mosaic"
     r = rows[3_000_300]
     assert r["track"] == "germline" and "proband_VAF<0.85" in r["fail_reasons"]
     assert "POSSIBLE_MOSAIC_NEEDS_DEPTH" in r["flags"]

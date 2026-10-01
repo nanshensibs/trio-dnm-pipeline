@@ -1,7 +1,7 @@
 // Stage 1 (protocol §3) — pre-flight sample QC with hard stop-gates, plus the
 // run-level MultiQC report (§3.1) and provenance records (§13.1).
 
-include { asList ; trioDnmEnv } from './utils'
+include { asList ; mainFile ; trioDnmEnv } from './utils'
 
 process MOSDEPTH {
     tag "$id"
@@ -58,7 +58,7 @@ process SOMALIER_EXTRACT {
     tuple val(fam), path("extracted/${id}.somalier"), emit: somalier
     script:
     """
-    somalier extract -d extracted/ --sites ${sites} -f ${fasta} ${bam}
+    somalier extract -d extracted/ --sites ${mainFile(sites)} -f ${fasta} ${bam}
     """
     stub:
     "mkdir -p extracted && touch extracted/${id}.somalier"
