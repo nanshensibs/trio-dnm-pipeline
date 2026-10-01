@@ -1,0 +1,11 @@
+# Second stub scenario on top of -profile test_stub: FASTQ rows (ALIGN subworkflow,
+# FAM002, proband with two lanes) mixed with BAM/CRAM rows (FAM001), WES mode with
+# capture intervals. Run from the trio_dnm_pipeline/ directory:
+#   nextflow run main.nf -stub -profile test_stub -params-file tests/nextflow/params_fastq.yaml
+samplesheet: tests/nextflow/samplesheet_fastq.csv
+data_type: wes
+intervals: tests/nextflow/resources/targets.bed
+known_sites:
+  - tests/nextflow/resources/known_sites.vcf.gz
+parental_ages:
+  FAM002: [38, 33]

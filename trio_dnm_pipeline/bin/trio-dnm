@@ -1,9 +1,27 @@
 #!/usr/bin/env python3
-"""Nextflow puts bin/ on PATH; this shim makes the package importable from it."""
+"""Launcher for the trio_dnm package (Nextflow puts bin/ on PATH).
+
+The package is imported from, in order: <projectDir>/trio_dnm next to this
+script (when that directory is visible), PYTHONPATH (Nextflow tasks stage the
+package into the task directory as pylib/trio_dnm and export PYTHONPATH, so
+the project directory need not be mounted in the container), or an installed
+distribution (`pip install .`, e.g. the image built from the Dockerfile).
+"""
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-from trio_dnm.cli import main  # noqa: E402
+if sys.version_info < (3, 10):
+    sys.exit("trio-dnm requires Python >= 3.10 (this is %s at %s)" % (sys.version.split()[0], sys.executable))
+
+_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+if os.path.isfile(os.path.join(_root, "trio_dnm", "__init__.py")):
+    sys.path.insert(0, _root)
+try:
+    from trio_dnm.cli import main
+except ModuleNotFoundError as e:
+    if e.name != "trio_dnm":
+        raise
+    sys.exit("trio-dnm: cannot import the trio_dnm package: it is not next to %s, on PYTHONPATH "
+             "or installed (pip install <trio_dnm_pipeline>)" % os.path.realpath(__file__))
 
 sys.exit(main())
