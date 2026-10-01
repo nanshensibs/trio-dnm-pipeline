@@ -13,12 +13,15 @@ require curation by a qualified reviewer.
 """
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Optional, Tuple
 
 from .vcf import open_text, parse_csq, to_float
 
 ALIASES: Dict[str, List[str]] = {
-    "REVEL": ["REVEL", "REVEL_score", "REVEL_rankscore"],
+    # Raw REVEL score only: dbNSFP REVEL_rankscore is rank-normalised and is not
+    # on the scale of the Pejaver (2022) thresholds.
+    "REVEL": ["REVEL", "REVEL_score"],
     "CADD_PHRED": ["CADD_PHRED", "CADD_phred"],
     "AlphaMissense": ["am_pathogenicity", "AlphaMissense_score", "AlphaMissense"],
     "AlphaMissense_class": ["am_class", "AlphaMissense_pred"],
@@ -27,9 +30,10 @@ ALIASES: Dict[str, List[str]] = {
     "ESM1b": ["ESM1b_score", "ESM1b"],
     "EVE": ["EVE_score", "EVE"],
     "MetaRNN": ["MetaRNN_score"],
-    "phyloP": ["phyloP100way_vertebrate", "phyloP", "phyloP447way", "Conservation", "phyloP241way_mammal"],
+    "phyloP": ["phyloP100way_vertebrate", "phyloP100way", "phyloP", "phyloP447way", "Conservation", "phyloP241way_mammal"],
     "GERP": ["GERP++_RS", "GERP_91_mammals", "GERP"],
-    "gnomAD_AF": ["gnomADv4_AF", "gnomAD_AF", "gnomADe_AF", "gnomADg_AF", "gnomAD_joint_AF", "MAX_AF"],
+    # gnomADv4_AF_joint: VEP --custom short_name=gnomADv4 with field AF_joint.
+    "gnomAD_AF": ["gnomADv4_AF_joint", "gnomADv4_AF", "gnomAD_AF", "gnomADe_AF", "gnomADg_AF", "gnomAD_joint_AF", "MAX_AF"],
     "ClinVar": ["ClinVar_CLNSIG", "CLIN_SIG", "ClinVar"],
     "ClinVar_disease": ["ClinVar_CLNDN"],
     "Pangolin": ["Pangolin", "pangolin"],
@@ -48,6 +52,26 @@ NONCODING = {
     "mature_miRNA_variant",
 }
 SPLICE_REGION = {"splice_region_variant", "splice_donor_5th_base_variant", "splice_donor_region_variant", "splice_polypyrimidine_tract_variant"}
+CANONICAL_SPLICE = {"splice_donor_variant", "splice_acceptor_variant"}
+DOMINANT_TOKENS = {"AD", "XLD", "DOMINANT"}
+
+AA3TO1 = {
+    "Ala": "A", "Arg": "R", "Asn": "N", "Asp": "D", "Cys": "C", "Gln": "Q", "Glu": "E", "Gly": "G", "His": "H",
+    "Ile": "I", "Leu": "L", "Lys": "K", "Met": "M", "Phe": "F", "Pro": "P", "Ser": "S", "Thr": "T", "Trp": "W",
+    "Tyr": "Y", "Val": "V", "Ter": "*",
+}
+_AA3_RE = re.compile("|".join(AA3TO1))
+
+
+def norm_pchange(s: Optional[str]) -> str:
+    """Protein change in a comparable form: transcript prefix, 'p.' and
+    parentheses removed, three-letter amino acids as one-letter codes, so
+    'ENSP0001.3:p.(Gly12Asp)', 'p.G12D' and 'G12D' all give 'G12D'."""
+    s = (s or "").strip().split(":")[-1].replace("%3D", "=")
+    if s.startswith("p."):
+        s = s[2:]
+    s = s.replace("(", "").replace(")", "")
+    return _AA3_RE.sub(lambda m: AA3TO1[m.group(0)], s)
 
 
 # --------------------------------------------------------------------------- #
@@ -57,7 +81,8 @@ def load_gene_table(path: Optional[str]) -> Dict[str, Dict[str, str]]:
     """TSV keyed by a ``gene`` (HGNC symbol) column. Recognised optional columns:
     pLI, LOEUF, mis_z, shet, hi_score (ClinGen dosage), disease, inheritance
     (AD/AR/XLD/XLR/...), mechanism (LoF/GoF/DN), cancer_role, hotspots
-    (comma-separated protein changes, e.g. p.R132H), expression (free text)."""
+    (comma-separated protein changes in one- or three-letter notation, e.g.
+    p.R132H or p.Arg132His), expression (free text)."""
     out: Dict[str, Dict[str, str]] = {}
     if not path:
         return out
@@ -99,11 +124,13 @@ def gene_constraint(g: Dict[str, str], cfg: dict) -> Dict[str, object]:
     ])
     mis_con = misz is not None and misz >= a["misz_constrained"]
     mech = (g.get("mechanism") or "").lower()
+    # Whole tokens only: 'XLR' / 'AR' must not count as dominant.
+    inh = set(re.split(r"[;,/|\s]+", (g.get("inheritance") or "").upper()))
     return {
         "lof_intolerant": lof_intol,
         "missense_constrained": mis_con,
         "lof_mechanism": lof_intol or "lof" in mech or "haploinsuff" in mech,
-        "dominant": any(x in (g.get("inheritance") or "").upper() for x in ("AD", "XLD", "DOMINANT", "XL")),
+        "dominant": bool(inh & DOMINANT_TOKENS),
         "pLI": pli, "LOEUF": loeuf, "mis_z": misz, "shet": shet, "hi_score": hi,
     }
 
@@ -203,8 +230,8 @@ def acmg(ann: Dict[str, object], track: str, cfg: dict, parentage_confirmed: boo
             strength = "Moderate"
         elif ann.get("nmd_escape"):
             strength = "Strong"
-        if ann.get("loftee") == "LC":
-            strength = "Moderate" if strength != "Moderate" else "Supporting"
+        if ann.get("loftee") == "LC":  # one level down
+            strength = STRENGTHS[max(0, STRENGTHS.index(strength) - 1)]
         codes.append(("PVS1", strength, POINTS[strength]))
 
     # De novo evidence.
@@ -250,7 +277,7 @@ def acmg(ann: Dict[str, object], track: str, cfg: dict, parentage_confirmed: boo
         elif not is_mis and sai is not None and sai <= a["spliceai_bp4"]:
             codes.append(("BP4", "Supporting", -1))
             phylop = ann.get("phyloP")
-            if "synonymous_variant" in csq_terms and (phylop is None or phylop < 0.1):
+            if "synonymous_variant" in csq_terms and phylop is not None and phylop < 0.1:
                 codes.append(("BP7", "Supporting", -1))
 
     points = sum(p for _, _, p in codes)
@@ -286,9 +313,10 @@ def annotate_record(rec, csq_fields: List[str], genes: Dict[str, Dict[str, str]]
                 break
     nmd = (gets(csq, "NMD") or "").lower()
     lof_flags = csq.get("LoF_flags", "")
+    lof_filter = csq.get("LoF_filter", "")  # LOFTEE END_TRUNC is a filter, not a flag
     hgvsp = csq.get("HGVSp", "")
-    protein_change = hgvsp.split(":")[-1] if hgvsp else ""
-    hotspots = {h.strip() for h in (g.get("hotspots") or "").split(",") if h.strip()}
+    protein_change = norm_pchange(hgvsp)
+    hotspots = {norm_pchange(h) for h in (g.get("hotspots") or "").split(",") if h.strip()}
     ann: Dict[str, object] = {
         "gene": symbol,
         "gene_id": csq.get("Gene", ""),
@@ -302,7 +330,8 @@ def annotate_record(rec, csq_fields: List[str], genes: Dict[str, Dict[str, str]]
         "domains": csq.get("DOMAINS", ""),
         "loftee": csq.get("LoF", ""),
         "loftee_flags": lof_flags,
-        "nmd_escape": "escap" in nmd or "END_TRUNC" in lof_flags or "NMD" in lof_flags,
+        "loftee_filter": lof_filter,
+        "nmd_escape": "escap" in nmd or "END_TRUNC" in lof_filter or "END_TRUNC" in lof_flags or "NMD" in lof_flags,
         "gnomad_af": af,
         "clinvar": gets(csq, "ClinVar") or str(rec.info.get("CLNSIG", "") or ""),
         "clinvar_disease": gets(csq, "ClinVar_disease") or str(rec.info.get("CLNDN", "") or ""),
@@ -349,6 +378,7 @@ def priority_tier(ann: Dict[str, object], acmg_class: str, cfg: dict) -> str:
     is_lof = bool(terms & set(a["lof_consequences"]))
     is_mis = bool(terms & set(a["missense_consequences"]))
     sai = ann.get("spliceai")
+    canonical_splice = bool(terms & CANONICAL_SPLICE)
     gc = ann.get("_constraint") or {}
     known_dominant = bool(ann.get("disease")) and gc.get("dominant")
     if acmg_class in ("Pathogenic", "Likely_pathogenic") or clin_plp or ann.get("hotspot"):
@@ -362,7 +392,9 @@ def priority_tier(ann: Dict[str, object], acmg_class: str, cfg: dict) -> str:
         damaging = s in ("Moderate", "Strong", "VeryStrong") or (am is not None and am >= 0.564)
         if damaging and (gc.get("missense_constrained") or gc.get("lof_intolerant") or known_dominant):
             return "Tier2"
-    if sai is not None and sai >= a["spliceai_pp3"]:
+    # Tier 3 is predicted splicing outside the canonical donor/acceptor sites;
+    # canonical splice variants that miss Tier 1 fall through to Tier 4.
+    if sai is not None and sai >= a["spliceai_pp3"] and not canonical_splice:
         return "Tier3"
     if is_lof or is_mis or terms & {"synonymous_variant", "stop_lost", "stop_retained_variant"} or terms & SPLICE_REGION:
         return "Tier4"

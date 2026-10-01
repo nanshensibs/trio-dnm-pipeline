@@ -3,18 +3,20 @@
 Refitting (not de novo extraction): exposures are estimated for a
 user-supplied COSMIC-format signature matrix (first column ``Type`` such as
 ``A[C>A]A``, one column per signature). With ~60-80 DNMs per trio, restrict
-the fit to a small biologically plausible set (default SBS1, SBS5, SBS40 for
-germline); a full-catalogue fit on so few mutations over-fits.
+the fit to a small biologically plausible set (default SBS1, SBS5, SBS40a for
+germline; COSMIC v3.4 split SBS40 into SBS40a/b/c); a full-catalogue fit on so
+few mutations over-fits.
 """
 from __future__ import annotations
 
 import math
+import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from .genome import SBS96, Fasta, sbs96_channel
 from .vcf import open_text
 
-GERMLINE_SIGNATURES = ["SBS1", "SBS5", "SBS40"]
+GERMLINE_SIGNATURES = ["SBS1", "SBS5", "SBS40a"]
 
 
 def spectrum(snvs: Iterable[Tuple[str, int, str, str]], fasta: Fasta) -> Dict[str, int]:
@@ -39,9 +41,30 @@ def load_signatures(path: str, keep: Optional[List[str]] = None) -> Tuple[List[s
             if len(f) < 2:
                 continue
             rows[f[0]] = [float(x) for x in f[1:]]
-    idx = [i for i, n in enumerate(names) if not keep or n in keep]
+    idx = list(range(len(names))) if not keep else _resolve(names, keep, path)
     sigs = {names[i]: [rows[ch][i] if ch in rows else 0.0 for ch in SBS96] for i in idx}
     return [names[i] for i in idx], sigs
+
+
+def _resolve(names: List[str], keep: List[str], path: str) -> List[int]:
+    """Column indices of the requested signatures (matrix order). COSMIC v3.4
+    split SBS40 into SBS40a/b/c: a missing 'SBS40' is taken as 'SBS40a' (and a
+    missing 'SBS40a' as 'SBS40' in older matrices), with a warning."""
+    found = set()
+    for want in (k.strip() for k in keep if k.strip()):
+        if want in names:
+            found.add(want)
+        elif want + "a" in names:
+            print(f"warning: signature {want} not in {path}; using {want}a (COSMIC v3.4 split)", file=sys.stderr)
+            found.add(want + "a")
+        elif want[-1:] == "a" and want[:-1] in names:
+            print(f"warning: signature {want} not in {path}; using {want[:-1]} (pre-v3.4 matrix)", file=sys.stderr)
+            found.add(want[:-1])
+        else:
+            print(f"warning: signature {want} not in {path}; left out of the refit", file=sys.stderr)
+    if not found:
+        raise SystemExit(f"none of the requested signatures ({', '.join(keep)}) found in {path}")
+    return [i for i, n in enumerate(names) if n in found]
 
 
 def nnls(W: List[List[float]], v: List[float], iters: int = 5000, tol: float = 1e-10) -> List[float]:

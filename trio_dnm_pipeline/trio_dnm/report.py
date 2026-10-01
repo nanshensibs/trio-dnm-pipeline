@@ -7,8 +7,8 @@ from typing import Dict, List
 from .genome import SBS96
 
 CSS = """
-:root{--bg:#fff;--fg:#1d2433;--muted:#5b6475;--line:#d9dee7;--accent:#1f6f8b;--warn:#b54708;--ok:#2e7d32;--head:#e8f1f5}
-@media (prefers-color-scheme:dark){:root{--bg:#12161c;--fg:#e6e9ef;--muted:#9aa3b2;--line:#2c3440;--accent:#5fb3d0;--warn:#f0a35e;--ok:#7bc67e;--head:#1c2630}}
+:root{--bg:#fff;--fg:#1d2433;--muted:#5b6475;--line:#d9dee7;--accent:#1f6f8b;--warn:#b54708;--ok:#2e7d32;--head:#e8f1f5;--sbs-cg:#010101}
+@media (prefers-color-scheme:dark){:root{--bg:#12161c;--fg:#e6e9ef;--muted:#9aa3b2;--line:#2c3440;--accent:#5fb3d0;--warn:#f0a35e;--ok:#7bc67e;--head:#1c2630;--sbs-cg:#9aa3b2}}
 body{background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;margin:0 auto;max-width:1200px;padding:24px 16px}
 h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:28px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
 .muted{color:var(--muted)}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
@@ -16,6 +16,7 @@ h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:28px 0 8px;border-bott
 table{border-collapse:collapse;width:100%;font-size:12.5px}th,td{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}
 th{background:var(--head);position:sticky;top:0}.scroll{overflow-x:auto;max-height:520px}
 .warn{color:var(--warn)}.ok{color:var(--ok)}svg text{fill:var(--muted);font-size:9px}
+svg .sbs1{fill:var(--sbs-cg)}
 """
 
 SBS_COLORS = ["#03bcee", "#010101", "#e32926", "#cac9c9", "#a1ce63", "#ebc6c4"]
@@ -23,6 +24,10 @@ SBS_COLORS = ["#03bcee", "#010101", "#e32926", "#cac9c9", "#a1ce63", "#ebc6c4"]
 
 def _esc(x) -> str:
     return html.escape(str(x))
+
+
+def _pct(v) -> str:
+    return f"{v:.0%}" if isinstance(v, (int, float)) else str(v)
 
 
 def spectrum_svg(counts: Dict[str, int]) -> str:
@@ -34,9 +39,11 @@ def spectrum_svg(counts: Dict[str, int]) -> str:
         v = counts.get(ch, 0)
         bh = (h - 40) * v / mx
         color = SBS_COLORS[i // 16]
-        bars.append(f'<rect x="{pad + i * bw:.1f}" y="{h - 20 - bh:.1f}" width="{bw * 0.8:.1f}" height="{bh:.1f}" fill="{color}"><title>{ch}: {v}</title></rect>')
+        # class sbsN lets CSS recolour the near-black C>G block in dark mode
+        bars.append(f'<rect class="sbs{i // 16}" x="{pad + i * bw:.1f}" y="{h - 20 - bh:.1f}" width="{bw * 0.8:.1f}" '
+                    f'height="{bh:.1f}" fill="{color}"><title>{_esc(ch)}: {_esc(v)}</title></rect>')
     labels = "".join(
-        f'<text x="{pad + (k * 16 + 8) * bw:.0f}" y="{h - 6}" text-anchor="middle">{m}</text>'
+        f'<text x="{pad + (k * 16 + 8) * bw:.0f}" y="{h - 6}" text-anchor="middle">{_esc(m)}</text>'
         for k, m in enumerate(["C>A", "C>G", "C>T", "T>A", "T>C", "T>G"])
     )
     return f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="SBS-96 spectrum">{"".join(bars)}{labels}</svg>'
@@ -69,12 +76,14 @@ def write_html(path: str, result: Dict, rows: List[Dict]) -> None:
         parts.append("</table>")
         lk = cs.get("parental_leakage") or {}
         if lk:
-            parts.append(f"<p class='muted'>Parental ALT-read leakage at germline DNMs: father {lk.get('father_any_alt_frac', '—')}, mother {lk.get('mother_any_alt_frac', '—')} (n={lk.get('n')}).</p>")
+            parts.append(f"<p class='muted'>Parental ALT-read leakage at germline DNMs: father {_esc(lk.get('father_any_alt_frac', '—'))}, "
+                         f"mother {_esc(lk.get('mother_any_alt_frac', '—'))} (n={_esc(lk.get('n'))}).</p>")
     if san.get("sbs96"):
         parts.append("<h2>Mutational spectrum (SBS-96, germline SNV DNMs)</h2>" + spectrum_svg(san["sbs96"]))
         sig = san.get("signatures")
         if sig:
-            parts.append(f"<p class='muted'>Signature refit (cosine {sig.get('cosine')}): " + ", ".join(f"{k} {v:.0%}" for k, v in sig.get("exposures", {}).items()) + "</p>")
+            parts.append(f"<p class='muted'>Signature refit (cosine {_esc(sig.get('cosine'))}): "
+                         + ", ".join(f"{_esc(k)} {_esc(_pct(v))}" for k, v in sig.get("exposures", {}).items()) + "</p>")
     parts.append("<h2>Prioritised variants</h2><div class='scroll'><table><tr>")
     cols = ["priority_rank", "priority_tier", "acmg_class", "acmg_codes", "gene", "hgvsp", "consequence", "track", "dnm_tier",
             "proband_vaf", "REVEL", "AlphaMissense", "spliceai", "LOEUF", "disease", "flags"]
