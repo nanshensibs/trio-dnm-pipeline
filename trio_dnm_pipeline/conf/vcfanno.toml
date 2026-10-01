@@ -1,0 +1,25 @@
+# vcfanno configuration applied to the normalised GATK trio VCF and to the normalised
+# DeepTrio/GLnexus VCF before `trio-dnm call`.
+# Paths are placeholders: point them at your local resource bundle. Absolute paths, or
+# paths relative to this file; each file (and its .tbi/.csi) is staged into the VCFANNO
+# task, so it is visible inside containers. Basenames must be unique.
+
+[[annotation]]
+file = "/refs/gnomad/gnomad.joint.v4.1.sites.vcf.gz"   # gnomAD v4.1 joint (exomes + genomes)
+fields = ["AF_joint", "AF_grpmax_joint"]               # joint-release labels are suffixes
+names = ["gnomAD_AF", "gnomAD_grpmax_AF"]
+ops = ["self", "self"]
+
+[[annotation]]
+file = "/refs/clinvar/clinvar.vcf.gz"
+fields = ["CLNSIG", "CLNREVSTAT"]
+names = ["CLNSIG", "CLNREVSTAT"]
+ops = ["self", "self"]
+
+# In-house panel of normals: `trio-dnm call` reads INFO/PON_AF (config
+# population.pon_info_key) in Layer 4; params.pon is only needed for an extra PoN.
+[[annotation]]
+file = "/refs/inhouse/pon.sites.vcf.gz"   # >=100 unrelated normals processed identically
+fields = ["AF"]
+names = ["PON_AF"]
+ops = ["self"]

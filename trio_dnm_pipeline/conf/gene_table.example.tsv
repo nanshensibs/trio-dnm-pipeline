@@ -1,0 +1,4 @@
+gene	pLI	LOEUF	mis_z	shet	hi_score	disease	inheritance	mechanism	cancer_role	hotspots
+SCN2A	1.00	0.11	5.92	0.21	3	Developmental and epileptic encephalopathy 11	AD	LoF;GoF		
+KRAS	0.73	0.52	3.40		0	Noonan syndrome 3	AD	GoF	oncogene	p.Gly12Asp,p.Gly12Val,p.Gly13Asp
+TP53	0.99	0.45	1.90		30	Li-Fraumeni syndrome	AD	LoF;DN	TSG	p.Arg175His,p.Arg248Gln,p.Arg273His

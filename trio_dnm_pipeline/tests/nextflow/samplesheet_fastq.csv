@@ -1,0 +1,9 @@
+family_id,sample_id,role,sex,dna_source,library,lane,bam,fastq_1,fastq_2
+FAM001,FAM001_P,proband,female,blood,,,data/FAM001_P.bam,,
+FAM001,FAM001_F,father,male,blood,,,data/FAM001_F.bam,,
+FAM001,FAM001_M,mother,female,lcl,,,data/FAM001_M.cram,,
+FAM001,FAM001_T,tumor,female,tissue,,,data/FAM001_T.bam,,
+FAM002,FAM002_P,proband,male,blood,LIB_P,L001,,data/FAM002_P_L001_R1.fastq.gz,data/FAM002_P_L001_R2.fastq.gz
+FAM002,FAM002_P,proband,male,blood,LIB_P,L002,,data/FAM002_P_L002_R1.fastq.gz,data/FAM002_P_L002_R2.fastq.gz
+FAM002,FAM002_F,father,male,saliva,,,,data/FAM002_F_L001_R1.fastq.gz,data/FAM002_F_L001_R2.fastq.gz
+FAM002,FAM002_M,mother,female,blood,,,,data/FAM002_M_L001_R1.fastq.gz,data/FAM002_M_L001_R2.fastq.gz

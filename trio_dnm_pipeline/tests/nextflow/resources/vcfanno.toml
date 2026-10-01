@@ -1,0 +1,20 @@
+# Stub-run vcfanno configuration: same annotations as conf/vcfanno.toml, with paths
+# relative to this file (they are resolved, staged and rewritten by main.nf).
+
+[[annotation]]
+file = "gnomad.joint.vcf.gz"
+fields = ["AF_joint", "AF_grpmax_joint"]
+names = ["gnomAD_AF", "gnomAD_grpmax_AF"]
+ops = ["self", "self"]
+
+[[annotation]]
+file = "clinvar.vcf.gz"
+fields = ["CLNSIG", "CLNREVSTAT"]
+names = ["CLNSIG", "CLNREVSTAT"]
+ops = ["self", "self"]
+
+[[annotation]]
+file = "pon.sites.vcf.gz"
+fields = ["AF"]
+names = ["PON_AF"]
+ops = ["self"]

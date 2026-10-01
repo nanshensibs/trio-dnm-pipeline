@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lupus-coscientist"
+version = "0.1.0"
+description = "A mechanism-discovery multi-agent co-scientist for systemic lupus erythematosus."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Shen Lab — Lupus Co-Scientist" }]
+keywords = ["lupus", "SLE", "co-scientist", "multi-agent", "causal-inference",
+            "mechanism-discovery", "immunology", "ABC", "IRF5"]
+dependencies = []
+
+[project.optional-dependencies]
+# The deterministic reasoning core needs nothing. These enable live agents.
+live = ["claude-agent-sdk>=0.1.0"]
+api = ["anthropic>=0.40.0"]
+config = ["pyyaml>=6.0"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+lupus-coscientist = "lupus_coscientist.cli:main"
+
+[tool.setuptools]
+packages = ["lupus_coscientist", "lupus_coscientist.agents"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
