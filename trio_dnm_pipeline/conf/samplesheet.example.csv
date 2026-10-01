@@ -1,5 +1,9 @@
-family_id,sample_id,role,sex,bam
-FAM001,FAM001_P,proband,female,/data/bam/FAM001_P.cram
-FAM001,FAM001_F,father,male,/data/bam/FAM001_F.cram
-FAM001,FAM001_M,mother,female,/data/bam/FAM001_M.cram
-FAM001,FAM001_T,tumor,female,/data/bam/FAM001_T.cram
+family_id,sample_id,role,sex,dna_source,library,lane,bam,fastq_1,fastq_2
+FAM001,FAM001_P,proband,female,blood,,,/data/bam/FAM001_P.cram,,
+FAM001,FAM001_F,father,male,blood,,,/data/bam/FAM001_F.cram,,
+FAM001,FAM001_M,mother,female,saliva,,,/data/bam/FAM001_M.cram,,
+FAM001,FAM001_T,tumor,female,tissue,,,/data/bam/FAM001_T.cram,,
+FAM002,FAM002_P,proband,male,blood,LIB_FAM002_P,L001,,/data/fastq/FAM002_P_L001_R1.fastq.gz,/data/fastq/FAM002_P_L001_R2.fastq.gz
+FAM002,FAM002_P,proband,male,blood,LIB_FAM002_P,L002,,/data/fastq/FAM002_P_L002_R1.fastq.gz,/data/fastq/FAM002_P_L002_R2.fastq.gz
+FAM002,FAM002_F,father,male,lcl,,,,/data/fastq/FAM002_F_R1.fastq.gz,/data/fastq/FAM002_F_R2.fastq.gz
+FAM002,FAM002_M,mother,female,blood,,,,/data/fastq/FAM002_M_R1.fastq.gz,/data/fastq/FAM002_M_R2.fastq.gz
