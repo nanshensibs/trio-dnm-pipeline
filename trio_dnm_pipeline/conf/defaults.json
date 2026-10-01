@@ -16,7 +16,8 @@
     "min_dp": 15,
     "max_dp_factor": 2.0,
     "max_alt": 1,
-    "max_vaf": 0.05
+    "max_vaf": 0.05,
+    "min_dp_hemizygous": 8
   },
   "site": {
     "min_mq": 40.0,
@@ -30,7 +31,8 @@
     "min_alt_per_strand": 1,
     "min_strand_fisher_p": 0.001,
     "max_softclip_frac": 0.3,
-    "softclip_info_key": "SCF"
+    "softclip_info_key": "SCF",
+    "honour_filter": true
   },
   "regions": {
     "exclude_beds": [],
@@ -50,6 +52,7 @@
     ],
     "max_af": 0.0001,
     "pon_max_af": 0.01,
+    "pon_info_key": "PON_AF",
     "recurrence_max": 5,
     "clinvar_keys": [
       "CLNSIG",
@@ -71,6 +74,8 @@
     "parent_min_dp": 30,
     "parent_max_alt": 0,
     "het_binom_p": 0.001,
+    "max_vaf": 0.4,
+    "prior_true": 0.001,
     "seq_error": 0.005,
     "parental_mosaic_min_alt": 2,
     "parental_mosaic_max_vaf": 0.25,
@@ -81,6 +86,25 @@
     "medium_min_callers": 2
   },
   "cluster_window_bp": 20000,
+  "qc": {
+    "freemix_warn": 0.02,
+    "freemix_fail": 0.05,
+    "parent_child_relatedness": [
+      0.4,
+      0.6
+    ],
+    "parent_child_max_ibs0": 0.005,
+    "unrelated_max_relatedness": 0.1,
+    "min_mean_depth": {
+      "wgs": 28.0,
+      "wes": 80.0,
+      "panel": 200.0
+    },
+    "male_y_ratio": 0.1,
+    "male_max_x_het": 0.05,
+    "mie_max_rate": 0.05,
+    "mie_min_sites": 1000
+  },
   "expectations": {
     "wgs": {
       "snv": [
@@ -96,15 +120,16 @@
     },
     "wes": {
       "snv": [
-        0.5,
-        2.5
+        0,
+        3
       ],
       "indel": [
         0,
         1
       ],
       "hard_low": 0,
-      "hard_high": 5
+      "hard_high": 5,
+      "flag_low": false
     },
     "panel": {
       "snv": [
@@ -116,7 +141,8 @@
         1
       ],
       "hard_low": 0,
-      "hard_high": 2
+      "hard_high": 2,
+      "flag_low": false
     },
     "titv": {
       "wgs": [
@@ -142,6 +168,12 @@
       "maternal": 0.37
     }
   },
+  "sanity": {
+    "median_vaf_range": [
+      0.42,
+      0.58
+    ]
+  },
   "annotation": {
     "pp3_tool": "REVEL",
     "calibration": {
@@ -155,7 +187,7 @@
         "bp4": [
           0.29,
           0.183,
-          0.052,
+          0.016,
           0.003
         ]
       },
@@ -240,7 +272,8 @@
     "ffpe_max_vaf": 0.1,
     "clonal_ccf": 0.8,
     "coding_mb": 30.0,
-    "tmb_high": 10.0
+    "tmb_high": 10.0,
+    "min_snv_full_refit": 50
   },
   "ch": {
     "min_vaf": 0.02,

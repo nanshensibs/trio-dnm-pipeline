@@ -74,6 +74,16 @@ def write_html(path: str, result: Dict, rows: List[Dict]) -> None:
         for k, v in wf.items():
             parts.append(f"<tr><td>{_esc(k)}</td><td>{_esc(v)}</td></tr>")
         parts.append("</table>")
+        gate = cs.get("mendelian_error_gate")
+        if gate:
+            rate = cs.get("raw_mendelian_error_rate")
+            cls = "warn" if gate == "FAIL" else "muted"
+            parts.append(f"<p class='{cls}'>Raw Mendelian error gate: {_esc(gate)} (rate {_esc(rate)}, "
+                         f"{_esc(cs.get('raw_mendelian_informative_sites'))} informative sites).</p>")
+        if cs.get("population_af_missing"):
+            parts.append("<p class='warn'>No gnomAD allele-frequency annotation was found in the input VCF: the population filter (Layer 4) was inactive.</p>")
+        if cs.get("second_engine_only_candidates"):
+            parts.append(f"<p class='muted'>Candidates found only by the second calling engine: {_esc(cs['second_engine_only_candidates'])}.</p>")
         lk = cs.get("parental_leakage") or {}
         if lk:
             parts.append(f"<p class='muted'>Parental ALT-read leakage at germline DNMs: father {_esc(lk.get('father_any_alt_frac', '—'))}, "

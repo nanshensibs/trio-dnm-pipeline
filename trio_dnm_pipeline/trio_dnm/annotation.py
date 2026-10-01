@@ -314,7 +314,7 @@ def annotate_record(rec, csq_fields: List[str], genes: Dict[str, Dict[str, str]]
     nmd = (gets(csq, "NMD") or "").lower()
     lof_flags = csq.get("LoF_flags", "")
     lof_filter = csq.get("LoF_filter", "")  # LOFTEE END_TRUNC is a filter, not a flag
-    hgvsp = csq.get("HGVSp", "")
+    hgvsp = csq.get("HGVSp", "") or csq.get("HGVS.p", "")
     protein_change = norm_pchange(hgvsp)
     hotspots = {norm_pchange(h) for h in (g.get("hotspots") or "").split(",") if h.strip()}
     ann: Dict[str, object] = {
@@ -324,7 +324,7 @@ def annotate_record(rec, csq_fields: List[str], genes: Dict[str, Dict[str, str]]
         "mane": csq.get("MANE_SELECT", ""),
         "consequence": csq.get("Consequence", csq.get("Annotation", "")),
         "impact": csq.get("IMPACT", csq.get("Annotation_Impact", "")),
-        "hgvsc": csq.get("HGVSc", ""),
+        "hgvsc": csq.get("HGVSc", "") or csq.get("HGVS.c", ""),
         "hgvsp": hgvsp,
         "exon": csq.get("EXON", ""),
         "domains": csq.get("DOMAINS", ""),

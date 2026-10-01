@@ -153,7 +153,7 @@ process TRIO_DNM_SOMATIC {
     script:
     def mode = role == 'tissue' ? 'tissue' : 'tumor'
     def gt = gene_table ? "--gene-table ${gene_table}" : ''
-    def sig = sbs ? "--signatures ${sbs}" : ''
+    def sig = sbs ? "--signatures ${sbs}" + (params.somatic_signature_subset ? " --signature-subset ${params.somatic_signature_subset}" : '') : ''
     def pur = params.tumor_purity ? "--purity ${params.tumor_purity}" : ''
     def ffpe = params.ffpe ? '--ffpe' : ''
     def config = cfg ? "--config ${cfg}" : ''

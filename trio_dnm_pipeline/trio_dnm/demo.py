@@ -298,6 +298,7 @@ results/  every output the pipeline produces:
   TUM.somatic.tsv          somatic calls with trio-aware filtering, CCF, drivers, two-hit
   TUM.somatic_summary.json TMB, drivers, second hits, CH-gene variants, clonality
   TUM.somatic.sbs96.tsv    somatic spectrum
+  TUM.two_hit.tsv          germline + somatic/LOH second hits per gene
   trio.ch_screen.tsv       clonal haematopoiesis hits in parental blood
   trio.ch_summary.json
 
