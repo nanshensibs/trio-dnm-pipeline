@@ -84,28 +84,37 @@ def _onehot(groups: np.ndarray, levels) -> sp.csr_matrix:
 
 
 def composition_test(labels, samples, condition, case: str, control: str,
-                     covariates=None, pseudocount: float = 0.5,
-                     use_t: bool = True) -> pd.DataFrame:
+                     covariates=None, pseudocount: float = 0.5, use_t: bool = True,
+                     dispersion: str = "per_type") -> pd.DataFrame:
     """Per-cell-type change in proportion between ``case`` and ``control`` samples.
 
-    For each cell type a binomial GLM is fitted to the per-sample counts
-    (successes = cells of that type, trials = all cells of the sample) with condition
-    (plus optional sample-level ``covariates``) as predictor. Over-dispersion between
-    donors is absorbed by a quasi-likelihood scale estimated from the Pearson chi^2
-    (``scale='X2'``, floored at 1), i.e. a *quasi-binomial GLM*. This is a frequentist,
-    sample-level stand-in for the MASC (mixed-effects logistic) / scCODA (Bayesian
-    Dirichlet-multinomial) family: it does not model the compositional constraint
-    jointly across cell types and has no reference-cell-type or spike-and-slab prior.
+    For each cell type a binomial GLM (statsmodels) is fitted to the per-sample
+    counts (successes = cells of that type, trials = all cells of the sample) with
+    condition (plus optional sample-level ``covariates``) as predictor. Over-dispersion
+    between donors is absorbed by a quasi-likelihood scale estimated from the Pearson
+    chi^2 (``scale='X2'``, floored at 1), i.e. a *quasi-binomial GLM*:
 
-    As in R's ``quasibinomial``, Wald tests use a t distribution on the residual
-    degrees of freedom (``use_t``). Proportions are relative: a large expansion of one
-    population (e.g. a novel disease state) lowers every other proportion, a caveat
-    scCODA addresses with a reference cell type.
+    * ``dispersion="per_type"`` -- one X2 scale per cell type (R ``quasibinomial``);
+    * ``dispersion="pooled"`` -- sum of Pearson X2 over cell types divided by the
+      summed residual df. Under a Dirichlet-multinomial model the binomial
+      over-dispersion factor is the same for every cell type, so pooling gives a
+      much more stable estimate when there are few donors.
+
+    This is a frequentist, sample-level stand-in for the MASC (mixed-effects
+    logistic) / scCODA (Bayesian Dirichlet-multinomial) family: it is *not* Bayesian,
+    does not model the compositional constraint jointly across cell types and has no
+    reference-cell-type or spike-and-slab prior. Wald tests use a t distribution on
+    the residual df (``use_t``, as R does for quasi families). Proportions are
+    relative: a large expansion of one population (e.g. a novel disease state)
+    lowers every other proportion -- the caveat scCODA addresses with a reference
+    cell type; exclude such cells to test the remaining composition.
 
     Returns one row per cell type: mean proportion per group, log2 fold change of mean
     proportions, condition coefficient (log odds ratio), its SE, quasi-likelihood
     dispersion, p and BH FDR, sorted by p.
     """
+    if dispersion not in ("per_type", "pooled"):
+        raise ValueError(f"unknown dispersion {dispersion!r}")
     labels = np.asarray(labels).astype(str)
     samples = np.asarray(samples).astype(str)
     cond = _sample_design(samples, condition, case, control)
@@ -116,36 +125,43 @@ def composition_test(labels, samples, condition, case: str, control: str,
     X = pd.concat([X, _covariate_matrix(covariates, samples, cond.index)], axis=1)
     is_case = (cond == case).to_numpy()
     props = counts.div(total, axis=0)
-    rows = []
+    fits = {}
     for ct in counts.columns:
         y = counts[ct].to_numpy(float)
         # continuity correction when a group has no cells of this type (separation)
         yy, nn = y, total
         if y[is_case].sum() == 0 or y[~is_case].sum() == 0:
             yy, nn = y + pseudocount, total + 2 * pseudocount
-        coef = se = p = scale = np.nan
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                # proportions with binomial weights (statsmodels' two-column endog
+                # proportions with binomial var_weights (statsmodels' two-column endog
                 # mis-scales the Pearson X2 dispersion)
-                model = sm.GLM(yy / nn, X.to_numpy(), family=sm.families.Binomial(),
-                               var_weights=nn)
-                fit = model.fit(scale="X2", use_t=use_t)
-                if fit.scale < 1.0:   # never claim under-dispersion
-                    fit = model.fit(scale=1.0, use_t=use_t)
-            coef, se, p, scale = fit.params[1], fit.bse[1], fit.pvalues[1], fit.scale
+                f = sm.GLM(yy / nn, X.to_numpy(), family=sm.families.Binomial(),
+                           var_weights=nn).fit(scale=1.0)
+            fits[ct] = (f.params[1], f.bse[1], f.pearson_chi2, f.df_resid)
         except Exception:     # pragma: no cover - degenerate design
-            pass
-        pc, pk = props.loc[is_case, ct].mean(), props.loc[~is_case, ct].mean()
-        eps = 0.5 / total.mean()
-        rows.append(dict(cell_type=ct, n_cells=int(y.sum()),
-                         **{f"prop_{case}": pc, f"prop_{control}": pk},
-                         log2FC=np.log2((pc + eps) / (pk + eps)), coef=coef, se=se,
-                         dispersion=scale, p=p))
-    df = pd.DataFrame(rows)
-    pv = df["p"].fillna(1.0).to_numpy()
-    df["fdr"] = bh_fdr(pv)
+            fits[ct] = (np.nan, np.nan, np.nan, np.nan)
+    F = pd.DataFrame(fits, index=["coef", "se1", "x2", "df"]).T.astype(float)
+    if dispersion == "pooled":
+        ok = np.isfinite(F["x2"])
+        F["phi"], F["df_phi"] = F.loc[ok, "x2"].sum() / F.loc[ok, "df"].sum(), F.loc[ok, "df"].sum()
+    else:
+        F["phi"], F["df_phi"] = F["x2"] / F["df"], F["df"]
+    F["phi"] = F["phi"].clip(lower=1.0)          # never claim under-dispersion
+    se = F["se1"] * np.sqrt(F["phi"])
+    stat = (F["coef"] / se).abs()
+    p = 2 * (stats.t.sf(stat, F["df_phi"]) if use_t else stats.norm.sf(stat))
+    eps = 0.5 / total.mean()
+    pc = props.loc[is_case].mean(axis=0)
+    pk = props.loc[~is_case].mean(axis=0)
+    df = pd.DataFrame({
+        "cell_type": counts.columns.astype(str), "n_cells": counts.sum(axis=0).astype(int).values,
+        f"prop_{case}": pc.values, f"prop_{control}": pk.values,
+        "log2FC": np.log2((pc.values + eps) / (pk.values + eps)),
+        "coef": F["coef"].values, "se": se.values, "dispersion": F["phi"].values,
+        "p": np.asarray(p, float)})
+    df["fdr"] = bh_fdr(df["p"].fillna(1.0).to_numpy())
     return df.sort_values("p").reset_index(drop=True)
 
 

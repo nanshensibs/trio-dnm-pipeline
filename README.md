@@ -170,3 +170,9 @@ inspected and argued with, which is the point. In live mode the framework is onl
 good as the evidence its tools return and the calibration of the agents' likelihood
 estimates; the Statistics, Negative Evidence, and Skeptic agents exist precisely
 because those estimates will sometimes be wrong.
+
+## Other projects in this repository
+
+* [`scrna_refmap/`](scrna_refmap/README.md): **refmap**, automated single-cell analysis by
+  reference mapping (Lotfollahi, Hao, Theis & Satija, *Cell* 2024).
+* [`trio_dnm_pipeline/`](trio_dnm_pipeline/README.md): trio de novo mutation pipeline.

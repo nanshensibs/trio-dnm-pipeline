@@ -68,13 +68,22 @@ def cluster_query(Zq_corr: np.ndarray, k: int = 15, resolution: float = 1.0,
 
 def summarize_clusters(clusters: np.ndarray, cell_scores: pd.DataFrame, Zq_corr: np.ndarray,
                        ref, predicted: np.ndarray, condition: np.ndarray | None = None,
-                       min_ood_fraction: float = 0.5,
-                       cluster_margin: float = 1.0) -> pd.DataFrame:
+                       min_ood_fraction: float = 0.5, null_quantile: float = 0.5,
+                       min_robust_z: float = 3.0) -> pd.DataFrame:
     """Per-query-cluster mapping report (Figure 1C).
 
     ``cluster_mahalanobis`` is Symphony's per-cluster metric: the Mahalanobis distance
     from the query cluster's mean to the closest reference centroid (closest under the
-    centroid's own covariance)."""
+    centroid's own covariance).
+
+    A cluster is flagged ``novel`` when most of its cells are out-of-distribution, or
+    when its cluster Mahalanobis distance is *both* (a) above the ``null_quantile`` of
+    clusters from held-out reference batches mapped as queries (calibration), and (b)
+    a robust outlier among this query's clusters (median/MAD z > ``min_robust_z``) --
+    the comparison across query clusters drawn in Figure 1C. Requiring both makes the
+    flag insensitive to an overall query-wide shift (a) and to a single moderately
+    unusual cluster in an otherwise tight query (b). On simulated data the held-out
+    null is conservative: known query clusters sit well below its median."""
     rows = []
     for c in np.unique(clusters):
         m = clusters == c
@@ -94,9 +103,14 @@ def summarize_clusters(clusters: np.ndarray, cell_scores: pd.DataFrame, Zq_corr:
     null = ref.calibration.get("null", {}).get("cluster_mahalanobis")
     if null is not None and len(null):
         df["p_cluster"] = empirical_pvalue(null, df["cluster_mahalanobis"].to_numpy())
-        # beyond every in-distribution held-out group, by a margin
-        df["cluster_outlier"] = df["cluster_mahalanobis"] > cluster_margin * null.max()
+        above_null = df["cluster_mahalanobis"] > np.quantile(null, null_quantile)
     else:
-        df["p_cluster"], df["cluster_outlier"] = np.nan, False
+        df["p_cluster"], above_null = np.nan, True
+    x = df["cluster_mahalanobis"].to_numpy()
+    med = np.median(x)
+    mad = 1.4826 * np.median(np.abs(x - med))
+    df["robust_z"] = (x - med) / mad if mad > 0 else 0.0
+    df["cluster_outlier"] = above_null & (df["robust_z"] > min_robust_z) if len(df) >= 4 \
+        else above_null
     df["novel"] = (df["ood_fraction"] >= min_ood_fraction) | df["cluster_outlier"]
     return df.sort_values("cluster").reset_index(drop=True)

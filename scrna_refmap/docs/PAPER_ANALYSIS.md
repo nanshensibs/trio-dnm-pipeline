@@ -145,6 +145,13 @@ no parameter tuning, speed and memory savings, and no re-clustering.
   reference/query mixing score is therefore about 0.4–0.5 for control donors, against
   0.93 for a held-out reference batch. Label transfer is unaffected (100%). The
   metrics report both the strict kNN mixing score and the centroid offset.
+* **The novel-cluster flag is a two-part rule.** A cluster must exceed the median of
+  held-out reference clusters (calibration) *and* be a robust outlier among the query's
+  own clusters (Figure 1C). Held-out reference batches sit farther from the centroids
+  than real query clusters do, so the calibration null alone is too conservative; a
+  single max-of-null threshold missed the novel cluster at one of six seeds. Across 20
+  simulated settings the two-part rule flagged the novel cluster every time, with one
+  extra (rare, known DC) cluster flagged once.
 * **Thresholds need calibration.** The paper calls for uncertainty metrics but gives no
   thresholds. Here every threshold is an empirical quantile of the reference mapped
   against itself, stored in the reference manifest so it travels with the version.
