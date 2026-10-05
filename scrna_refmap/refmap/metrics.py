@@ -12,7 +12,8 @@ on simulated data or on a query with author annotations):
 1. label-transfer accuracy / macro-F1 per hierarchy level, and label silhouette of the
    query in the joint space;
 2. reference/query mixing among shared cell types (kNN-based, normalised so 1 = as
-   mixed as expected from the dataset sizes) and batch-mixing entropy;
+   mixed as expected from the dataset sizes), centroid offset of shared types
+   relative to the reference's within-type spread, and batch-mixing entropy;
 3. novel-state detection AUROC of each per-cell statistic, and recall/precision of the
    cluster-level novel flag.
 """
@@ -75,6 +76,24 @@ def ref_query_mixing(Z_ref, Z_query, labels_ref, labels_query, k: int = 30) -> d
     return out
 
 
+def ref_query_alignment(Z_ref, Z_query, labels_ref, labels_query) -> dict:
+    """Criterion 2, location-based: distance between the reference and query centroids
+    of each shared cell type, divided by the reference's mean within-type spread
+    (0 = same centre). Complements :func:`ref_query_mixing`, which also penalises a
+    query that is *narrower* than the reference -- the normal outcome of projecting
+    cells that lack the reference's own batch-specific noise directions."""
+    labels_ref = np.asarray(labels_ref).astype(str)
+    labels_query = np.asarray(labels_query).astype(str)
+    out = {}
+    for lab in np.intersect1d(labels_ref, labels_query):
+        r, q = Z_ref[labels_ref == lab], Z_query[labels_query == lab]
+        if len(r) < 5 or len(q) < 5:
+            continue
+        spread = np.linalg.norm(r - r.mean(0), axis=1).mean()
+        out[lab] = float(np.linalg.norm(r.mean(0) - q.mean(0)) / max(spread, 1e-12))
+    return out
+
+
 def novelty_metrics(scores: pd.DataFrame, is_novel, cluster_novel=None) -> dict:
     is_novel = np.asarray(is_novel, bool)
     out = {}
@@ -112,6 +131,9 @@ def evaluate_mapping(ref, result, query_obs: pd.DataFrame, truth_keys: dict | No
             ref.Z_corr, result.Zq_corr, ref.labels(fine), t)
         vals = list(out["criterion2_integration"]["ref_query_mixing_per_type"].values())
         out["criterion2_integration"]["ref_query_mixing_mean"] = float(np.mean(vals)) if vals else np.nan
+        al = ref_query_alignment(ref.Z_corr, result.Zq_corr[~novel], ref.labels(fine), t[~novel])
+        out["criterion2_integration"]["centroid_offset_per_type"] = al
+        out["criterion2_integration"]["centroid_offset_mean"] = float(np.mean(list(al.values()))) if al else np.nan
     if batch_key and batch_key in query_obs:
         out["criterion2_integration"]["query_batch_mixing_entropy"] = mixing_entropy(
             result.Zq_corr, query_obs[batch_key].to_numpy())

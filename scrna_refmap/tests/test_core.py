@@ -123,7 +123,8 @@ def test_novel_disease_state_flagged(data):
     m = evaluate_mapping(ref, res, q.obs, novel_key="is_novel")
     assert m["criterion3_novel_states"]["novel_recall"] > 0.8
     assert m["criterion3_novel_states"]["auroc_knn_distance"] > 0.6
-    assert m["criterion2_integration"]["ref_query_mixing_mean"] > 0.5
+    assert m["criterion2_integration"]["ref_query_mixing_mean"] > 0.3
+    assert m["criterion2_integration"]["centroid_offset_mean"] < 0.3
 
 
 def test_save_load_roundtrip(data, tmp_path):

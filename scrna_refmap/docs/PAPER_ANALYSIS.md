@@ -138,6 +138,13 @@ no parameter tuning, speed and memory savings, and no re-clustering.
   only of novel cells is partly pulled towards its nearest reference centroid. The
   calibration therefore uses leave-one-batch-out **re-mapping**, so the null
   distributions include the same correction step.
+* **Projected queries are "narrower" than the reference.** Query cells land on the
+  right reference centroids (centroid offset about 0.04–0.2 of the within-type
+  spread). However, they lack the reference's own batch-specific noise directions, so
+  their spread is smaller, roughly 5.5 vs 6.8 latent units. A kNN-based
+  reference/query mixing score is therefore about 0.4–0.5 for control donors, against
+  0.93 for a held-out reference batch. Label transfer is unaffected (100%). The
+  metrics report both the strict kNN mixing score and the centroid offset.
 * **Thresholds need calibration.** The paper calls for uncertainty metrics but gives no
   thresholds. Here every threshold is an empirical quantile of the reference mapped
   against itself, stored in the reference manifest so it travels with the version.
