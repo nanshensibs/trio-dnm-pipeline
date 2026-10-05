@@ -392,16 +392,22 @@ def propose_update(ref: Reference, new_adata=None, label_keys=None, *,
     old_bat = None if ref.batch_key is None else ref.obs[ref.batch_key].to_numpy()
     before = _map_cells_loo(ref, ref.Z, old_bat, rows, k)
     after = _map_cells_loo(cand, cand.Z[:n_old], cand.obs[bkey].to_numpy()[:n_old], rows, k)
+    # agreement of each old cell's label with its neighbours (leave-self-out), in the
+    # old version vs. the candidate; ``change`` uses the candidate's current labels so
+    # intended re-annotations are not counted as regressions
     stability = {}
     for key in keys:
         y = ref.obs[key].astype(str).to_numpy()
+        y_now = cand.obs[key].astype(str).to_numpy()[:n_old]
         b = before[f"{key}_pred"].to_numpy() == y
         a = after[f"{key}_pred"].to_numpy() == y
+        a_now = after[f"{key}_pred"].to_numpy() == y_now
         per = pd.DataFrame({"l": y, "b": b, "a": a}).groupby("l")[["b", "a"]].mean()
         per["change"] = per["a"] - per["b"]
         stability[key] = dict(
             old_version=float(b.mean()), new_version=float(a.mean()),
-            change=float(a.mean() - b.mean()),
+            new_version_current_labels=float(a_now.mean()),
+            change=float(a_now.mean() - b.mean()),
             most_changed=per.sort_values("change").head(5).round(4).to_dict(orient="index"),
             reassigned_to=pd.Series(after[f"{key}_pred"].to_numpy()[~a & b])
             .value_counts().head(5).to_dict())

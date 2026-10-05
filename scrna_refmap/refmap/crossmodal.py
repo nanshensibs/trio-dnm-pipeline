@@ -512,7 +512,7 @@ def laplacian_eigenmaps(A: sp.spmatrix, n_components: int = 30) -> tuple[np.ndar
 def bridge_integration(ref_rna, ref_labels, bridge_rna, bridge_atac, query_atac, *,
                        ref_batch_key: str | None = None, reference=None, n_hvg: int = 2000,
                        n_pcs: int = 30, n_lsi: int = 30, n_lap: int = 30, k_graph: int = 20,
-                       dictionary: str = "knn", k_dict: int = 20, k: int = 30,
+                       dictionary: str = "pinv", k_dict: int = 20, k: int = 30,
                        unknown_threshold: float = 0.5, seed: int = 0) -> BridgeResult:
     """Seurat v5 bridge integration (dictionary learning) of an RNA reference and an
     ATAC query through a multiome bridge.

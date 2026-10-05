@@ -163,7 +163,7 @@ class MultiomeData:
 
 def simulate_multiome(n_genes: int = 800, n_ref_batches: int = 2, cells_per_ref_batch: int = 800,
                       n_query: int = 1200, n_bridge: int = 600, coupling: float = 0.7,
-                      noise_sd: float = 0.6, atac_depth: float = 1.0,
+                      noise_sd: float = 0.6, atac_depth: float = 0.4,
                       query_atac_batch_sd: float = 0.3, seed: int = 0,
                       props: dict | None = None) -> MultiomeData:
     """RNA reference + scATAC query + multiome bridge (Figure 3A)."""
